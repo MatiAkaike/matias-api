@@ -8,5 +8,5 @@ services:
       - key: DEEPSEEK_API_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: http://localhost:5173
+        value: https://www.akaike.lat,https://akaike.lat,https://matias-score.ai,https://www.matias-score.ai,http://localhost:5173
     plan: free
