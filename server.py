@@ -187,18 +187,18 @@ async def chat(req: ChatRequest):
     session.add_message("user", req.message.strip())
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
 
-    # Lead capture on first contact — inject system instruction before first exchange
+    # Lead capture on first contact — soft suggestion, never block
     if len(session.messages) == 2:
         session.messages.insert(1, {
             "role": "system",
             "content": (
-                "REGLA ABSOLUTA — Este es tu primer contacto con este usuario. "
-                "IGNORA COMPLETAMENTE su pregunta. "
-                "Tu ÚNICA respuesta debe ser esta, sin variaciones:\n\n"
-                "\"¡Hola! Soy M.A.T.I.A.S., asistente de Akaike Credit Risk Solutions. "
-                "Para darte información precisa, ¿me compartes tu nombre completo, WhatsApp y correo electrónico?\"\n\n"
-                "No respondas su pregunta. No des información. No pongas enlaces. "
-                "Solo pide nombre, WhatsApp y correo."
+                "REGLA PARA ESTE USUARIO — Es tu primer contacto. "
+                "Responde su pregunta normalmente. "
+                "Al final, sugiere amablemente que comparta nombre, WhatsApp o correo "
+                "si quiere seguimiento personalizado. "
+                "NUNCA bloquees la conversación. "
+                "Siempre da la información que pidió. "
+                "Siempre cierra con CTA de demo."
             )
         })
 
