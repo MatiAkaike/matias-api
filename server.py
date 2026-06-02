@@ -10,7 +10,7 @@ from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -132,6 +132,20 @@ class HealthResponse(BaseModel):
     status: str
     agent: str
 
+
+class AnalyticsPageView(BaseModel):
+    session_id: str
+    url: str
+    referrer: Optional[str] = None
+
+
+class AnalyticsEvent(BaseModel):
+    session_id: str
+    event_type: str
+    element: Optional[str] = None
+    url: Optional[str] = None
+    metadata: Optional[str] = None
+
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 
@@ -240,6 +254,45 @@ async def interaction_stats():
 async def session_interactions(session_id: str, limit: int = 50):
     rows = await database.get_session_interactions(session_id, limit)
     return {"session_id": session_id, "total": len(rows), "interactions": rows}
+
+
+# ─── Analytics tracking endpoints ─────────────────────────────────────────
+
+
+@app.post("/api/analytics/pageview")
+async def track_pageview(req: AnalyticsPageView, request: Request):
+    ua = request.headers.get("User-Agent", "")
+    referrer = req.referrer or request.headers.get("Referer", "")
+    country = request.headers.get("CF-IPCountry") or request.headers.get("X-Vercel-IP-Country") or "unknown"
+    await database.log_page_view(req.session_id, req.url, referrer, ua, country)
+    return {"status": "ok"}
+
+
+@app.post("/api/analytics/event")
+async def track_event(req: AnalyticsEvent):
+    await database.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata)
+    return {"status": "ok"}
+
+
+# ─── Analytics reporting endpoints (para Amelia) ──────────────────────────
+
+
+@app.get("/api/analytics/dashboard")
+async def analytics_dashboard():
+    data = await database.get_analytics_dashboard()
+    return data
+
+
+@app.get("/api/analytics/pageviews")
+async def analytics_pageviews(limit: int = 50):
+    rows = await database.get_recent_pageviews(limit)
+    return {"total": len(rows), "pageviews": rows}
+
+
+@app.get("/api/analytics/visitors")
+async def analytics_visitors(limit: int = 50):
+    rows = await database.get_visitor_sessions(limit)
+    return {"total": len(rows), "visitors": rows}
 
 
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
