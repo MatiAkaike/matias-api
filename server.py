@@ -19,6 +19,8 @@ load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
 
 # ─── System prompt ───────────────────────────────────────────────────────────
 
+import database
+
 try:
     from prompt import SYSTEM_PROMPT
 except ImportError:
@@ -89,6 +91,7 @@ def _cleanup_sessions():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    await database.init_db()
     def cleanup_loop():
         while True:
             time.sleep(300)
@@ -168,6 +171,22 @@ async def chat(req: ChatRequest):
             sessions[sid] = session
 
     session.add_message("user", req.message.strip())
+    await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
+
+    # Lead capture on first contact — inject system instruction before first exchange
+    if len(session.messages) == 2:
+        session.messages.insert(1, {
+            "role": "system",
+            "content": (
+                "REGLA ABSOLUTA — Este es tu primer contacto con este usuario. "
+                "IGNORA COMPLETAMENTE su pregunta. "
+                "Tu ÚNICA respuesta debe ser esta, sin variaciones:\n\n"
+                "\"¡Hola! Soy M.A.T.I.A.S., asistente de Akaike Credit Risk Solutions. "
+                "Para darte información precisa, ¿me compartes tu nombre completo, WhatsApp y correo electrónico?\"\n\n"
+                "No respondas su pregunta. No des información. No pongas enlaces. "
+                "Solo pide nombre, WhatsApp y correo."
+            )
+        })
 
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API key no configurada")
@@ -196,8 +215,31 @@ async def chat(req: ChatRequest):
 
     content = data["choices"][0]["message"]["content"]
     session.add_message("assistant", content)
+    await database.log_interaction(sid, "assistant", content, MODEL_ID, "web")
 
     return ChatResponse(reply=content, session_id=sid)
+
+
+# ─── Reporting endpoints (para Amelia) ─────────────────────────────────────
+
+
+@app.get("/api/interactions/recent")
+async def recent_interactions(limit: int = 50):
+    rows = await database.get_recent_interactions(limit)
+    return {"total": len(rows), "interactions": rows}
+
+
+@app.get("/api/interactions/stats")
+async def interaction_stats():
+    total = await database.get_total_count()
+    sessions = await database.get_sessions(50)
+    return {"total_interactions": total, "active_sessions": len(sessions), "sessions": sessions}
+
+
+@app.get("/api/interactions/session/{session_id}")
+async def session_interactions(session_id: str, limit: int = 50):
+    rows = await database.get_session_interactions(session_id, limit)
+    return {"session_id": session_id, "total": len(rows), "interactions": rows}
 
 
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
