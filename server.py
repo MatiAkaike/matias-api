@@ -4,6 +4,7 @@ import re
 import uuid
 import time
 import threading
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -20,6 +21,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
 # ─── System prompt ───────────────────────────────────────────────────────────
 
 import database
+import leads
 
 try:
     from prompt import SYSTEM_PROMPT
@@ -86,12 +88,23 @@ def _cleanup_sessions():
         for sid in expired:
             del sessions[sid]
 
+
+async def _try_capture_lead(session_id: str, message: str):
+    """Attempt to extract and save lead data from a user message."""
+    try:
+        lead = await leads.save_lead(session_id, message)
+        if lead:
+            await leads.notify_amelia(lead, session_id, message)
+    except Exception:
+        pass
+
 # ─── Lifespan ────────────────────────────────────────────────────────────────
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await database.init_db()
+    await leads.init_leads_db()
     def cleanup_loop():
         while True:
             time.sleep(300)
@@ -186,6 +199,9 @@ async def chat(req: ChatRequest):
 
     session.add_message("user", req.message.strip())
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
+
+    # Lead capture: try to extract contact data from user's message
+    asyncio.ensure_future(_try_capture_lead(sid, req.message.strip()))
 
     # Lead capture on first contact — elegant hook for contact data
     if len(session.messages) == 2:
@@ -296,6 +312,15 @@ async def analytics_pageviews(limit: int = 50):
 async def analytics_visitors(limit: int = 50):
     rows = await database.get_visitor_sessions(limit)
     return {"total": len(rows), "visitors": rows}
+
+
+# ─── Leads endpoint (para Amelia) ──────────────────────────────────────────
+
+@app.get("/api/leads")
+async def get_leads(limit: int = 50):
+    rows = await leads.get_all_leads(limit)
+    count = await leads.get_lead_count()
+    return {"total": count, "leads": rows}
 
 
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
