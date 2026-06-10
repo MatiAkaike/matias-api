@@ -187,18 +187,21 @@ async def chat(req: ChatRequest):
     session.add_message("user", req.message.strip())
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
 
-    # Lead capture on first contact — soft suggestion, never block
+    # Lead capture on first contact — elegant hook for contact data
     if len(session.messages) == 2:
         session.messages.insert(1, {
             "role": "system",
             "content": (
                 "REGLA PARA ESTE USUARIO — Es tu primer contacto. "
                 "Responde su pregunta normalmente. "
-                "Al final, sugiere amablemente que comparta nombre, WhatsApp o correo "
-                "si quiere seguimiento personalizado. "
-                "NUNCA bloquees la conversación. "
-                "Siempre da la información que pidió. "
-                "Siempre cierra con CTA de demo."
+                "Al final, ofrécele elegantemente enviarle información más detallada "
+                "(una presentación técnica, un documento, un caso de éxito) relacionado con lo que preguntó, "
+                "y pídele a cambio su nombre completo, empresa, cargo, WhatsApp y correo electrónico. "
+                "Usa un gancho como: 'Me encantaría enviarte la presentación detallada de M.A.T.I.A.S. "
+                "con la arquitectura y los casos de éxito. ¿Me compartes tu nombre completo, empresa, "
+                "cargo, WhatsApp y correo y te la hago llegar de inmediato?' "
+                "Sé elegante, no presiones. Si no comparte los datos, no insistas. "
+                "NUNCA bloquees la conversación. Siempre cierra con CTA de demo."
             )
         })
 
