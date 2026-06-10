@@ -1,7 +1,8 @@
 import os
-import asyncpg
+import psycopg
+from psycopg.rows import dict_row
 from datetime import datetime, timezone
-from pathlib import Path
+import hashlib
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
@@ -11,13 +12,18 @@ _pool = None
 async def get_pool():
     global _pool
     if _pool is None:
-        _pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=3)
+        _pool = psycopg.AsyncConnectionPool(
+            DATABASE_URL,
+            min_size=1,
+            max_size=3,
+            kwargs={"row_factory": dict_row}
+        )
     return _pool
 
 
 async def init_db():
     pool = await get_pool()
-    async with pool.acquire() as conn:
+    async with pool.connection() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS chat_interactions (
                 id SERIAL PRIMARY KEY,
@@ -37,8 +43,8 @@ async def init_db():
                 message_count INTEGER DEFAULT 0
             )
         """)
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_session ON chat_interactions(session_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON chat_interactions(timestamp)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_int_session ON chat_interactions(session_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_int_ts ON chat_interactions(timestamp)")
 
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS page_views (
@@ -78,75 +84,70 @@ async def init_db():
                 country TEXT
             )
         """)
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pageviews_session ON page_views(session_id)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pageviews_timestamp ON page_views(timestamp)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_timestamp ON analytics_events(timestamp)")
-        await conn.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON analytics_events(event_type)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pv_session ON page_views(session_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pv_ts ON page_views(timestamp)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ev_ts ON analytics_events(timestamp)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_ev_type ON analytics_events(event_type)")
 
 
 async def log_interaction(session_id: str, role: str, content: str, model: str = None, source: str = "web"):
     try:
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.connection() as conn:
             await conn.execute(
-                "INSERT INTO chat_interactions (session_id, role, content, model, source) VALUES ($1, $2, $3, $4, $5)",
-                session_id, role, content, model, source
+                "INSERT INTO chat_interactions (session_id, role, content, model, source) VALUES (%s, %s, %s, %s, %s)",
+                (session_id, role, content, model, source)
             )
             await conn.execute("""
                 INSERT INTO chat_sessions (session_id, created_at, last_activity, message_count)
-                VALUES ($1, NOW(), NOW(), 1)
+                VALUES (%s, NOW(), NOW(), 1)
                 ON CONFLICT(session_id) DO UPDATE SET
                     last_activity = NOW(),
                     message_count = chat_sessions.message_count + 1
-            """, session_id)
+            """, (session_id,))
     except Exception:
         pass
 
 
 async def get_recent_interactions(limit: int = 50):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM chat_interactions ORDER BY timestamp DESC LIMIT $1",
-            limit
-        )
-        return [dict(row) for row in rows]
+    async with pool.connection() as conn:
+        rows = await conn.execute("SELECT * FROM chat_interactions ORDER BY timestamp DESC LIMIT %s", (limit,))
+        return [dict(row) for row in await rows.fetchall()]
 
 
 async def get_sessions(limit: int = 50):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT session_id, created_at, last_activity, message_count FROM chat_sessions ORDER BY last_activity DESC LIMIT $1",
-            limit
+    async with pool.connection() as conn:
+        rows = await conn.execute(
+            "SELECT session_id, created_at, last_activity, message_count FROM chat_sessions ORDER BY last_activity DESC LIMIT %s",
+            (limit,)
         )
-        return [dict(row) for row in rows]
+        return [dict(row) for row in await rows.fetchall()]
 
 
 async def get_total_count():
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT COUNT(*) as count FROM chat_interactions")
+    async with pool.connection() as conn:
+        row = (await (await conn.execute("SELECT COUNT(*) as count FROM chat_interactions")).fetchone())
         return row["count"]
 
 
 async def get_session_interactions(session_id: str, limit: int = 50):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT * FROM chat_interactions WHERE session_id = $1 ORDER BY timestamp DESC LIMIT $2",
-            session_id, limit
+    async with pool.connection() as conn:
+        rows = await conn.execute(
+            "SELECT * FROM chat_interactions WHERE session_id = %s ORDER BY timestamp DESC LIMIT %s",
+            (session_id, limit)
         )
-        return [dict(row) for row in rows]
+        return [dict(row) for row in await rows.fetchall()]
 
 
 # ─── Analytics ────────────────────────────────────────────────────────────
 
 def _detect_device(ua: str) -> tuple:
     ua_lower = ua.lower() if ua else ""
-    device = "desktop"
-    browser = "other"
-    os_name = "other"
+    device, browser, os_name = "desktop", "other", "other"
 
     if "iphone" in ua_lower or "ipad" in ua_lower or "ipod" in ua_lower:
         device = "mobile" if "iphone" in ua_lower or "ipod" in ua_lower else "tablet"
@@ -155,23 +156,16 @@ def _detect_device(ua: str) -> tuple:
     elif "macintosh" in ua_lower or "windows" in ua_lower or "linux" in ua_lower:
         device = "desktop"
 
-    if "edg/" in ua_lower:
-        browser = "edge"
-    elif "chrome/" in ua_lower and "edg/" not in ua_lower:
-        browser = "chrome"
-    elif "safari/" in ua_lower and "chrome/" not in ua_lower:
-        browser = "safari"
-    elif "firefox/" in ua_lower:
-        browser = "firefox"
+    if "edg/" in ua_lower: browser = "edge"
+    elif "chrome/" in ua_lower: browser = "chrome"
+    elif "safari/" in ua_lower: browser = "safari"
+    elif "firefox/" in ua_lower: browser = "firefox"
 
-    if "iphone" in ua_lower or "ipad" in ua_lower or "macintosh" in ua_lower:
-        os_name = "ios" if "iphone" in ua_lower or "ipad" in ua_lower else "macos"
-    elif "android" in ua_lower:
-        os_name = "android"
-    elif "windows" in ua_lower:
-        os_name = "windows"
-    elif "linux" in ua_lower and "android" not in ua_lower:
-        os_name = "linux"
+    if "iphone" in ua_lower or "ipad" in ua_lower: os_name = "ios"
+    elif "macintosh" in ua_lower: os_name = "macos"
+    elif "android" in ua_lower: os_name = "android"
+    elif "windows" in ua_lower: os_name = "windows"
+    elif "linux" in ua_lower: os_name = "linux"
 
     return device, browser, os_name
 
@@ -180,22 +174,19 @@ async def log_page_view(session_id: str, url: str, referrer: str, user_agent: st
     try:
         device, browser, os_name = _detect_device(user_agent)
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.connection() as conn:
             await conn.execute(
-                "INSERT INTO page_views (session_id, url, referrer, device_type, browser, os, country, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)",
-                session_id, url, referrer, device, browser, os_name, country, source
+                "INSERT INTO page_views (session_id, url, referrer, device_type, browser, os, country, source) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                (session_id, url, referrer, device, browser, os_name, country, source)
             )
             await conn.execute("""
                 INSERT INTO analytics_sessions (session_id, first_seen, last_seen, page_views, events, device_type, browser, os, country)
-                VALUES ($1, NOW(), NOW(), 1, 0, $2, $3, $4, $5)
+                VALUES (%s, NOW(), NOW(), 1, 0, %s, %s, %s, %s)
                 ON CONFLICT(session_id) DO UPDATE SET
                     last_seen = NOW(),
                     page_views = analytics_sessions.page_views + 1,
-                    device_type = $2,
-                    browser = $3,
-                    os = $4,
-                    country = $5
-            """, session_id, device, browser, os_name, country)
+                    device_type = %s, browser = %s, os = %s, country = %s
+            """, (session_id, device, browser, os_name, country, device, browser, os_name, country))
     except Exception:
         pass
 
@@ -203,46 +194,52 @@ async def log_page_view(session_id: str, url: str, referrer: str, user_agent: st
 async def log_event(session_id: str, event_type: str, element: str, url: str, metadata: str = None):
     try:
         pool = await get_pool()
-        async with pool.acquire() as conn:
+        async with pool.connection() as conn:
             await conn.execute(
-                "INSERT INTO analytics_events (session_id, event_type, element, url, metadata) VALUES ($1, $2, $3, $4, $5)",
-                session_id, event_type, element, url, metadata
+                "INSERT INTO analytics_events (session_id, event_type, element, url, metadata) VALUES (%s, %s, %s, %s, %s)",
+                (session_id, event_type, element, url, metadata)
             )
             await conn.execute("""
                 INSERT INTO analytics_sessions (session_id, first_seen, last_seen, page_views, events, device_type, browser, os, country)
-                VALUES ($1, NOW(), NOW(), 0, 1, 'unknown', 'unknown', 'unknown', 'unknown')
+                VALUES (%s, NOW(), NOW(), 0, 1, 'unknown', 'unknown', 'unknown', 'unknown')
                 ON CONFLICT(session_id) DO UPDATE SET
                     last_seen = NOW(),
                     events = analytics_sessions.events + 1
-            """, session_id)
+            """, (session_id,))
     except Exception:
         pass
 
 
 async def get_analytics_dashboard():
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        total_pageviews = await conn.fetchval("SELECT COUNT(*) FROM page_views")
-        total_visitors = await conn.fetchval("SELECT COUNT(DISTINCT session_id) FROM page_views")
-        total_events = await conn.fetchval("SELECT COUNT(*) FROM analytics_events WHERE event_type != 'page_view'")
+    async with pool.connection() as conn:
+        total_pageviews = (await (await conn.execute("SELECT COUNT(*) FROM page_views")).fetchone())["count"]
+        total_visitors = (await (await conn.execute("SELECT COUNT(DISTINCT session_id) FROM page_views")).fetchone())["count"]
+        total_events = (await (await conn.execute("SELECT COUNT(*) FROM analytics_events WHERE event_type != 'page_view'")).fetchone())["count"]
 
-        device_rows = await conn.fetch("SELECT device_type, COUNT(*) as c FROM analytics_sessions GROUP BY device_type ORDER BY c DESC")
-        devices = {row["device_type"]: row["c"] for row in device_rows}
+        devices = {row["device_type"]: row["c"] for row in await (await conn.execute(
+            "SELECT device_type, COUNT(*) as c FROM analytics_sessions GROUP BY device_type ORDER BY c DESC"
+        )).fetchall()}
 
-        browser_rows = await conn.fetch("SELECT browser, COUNT(*) as c FROM analytics_sessions GROUP BY browser ORDER BY c DESC LIMIT 5")
-        browsers = {row["browser"]: row["c"] for row in browser_rows}
+        browsers = {row["browser"]: row["c"] for row in await (await conn.execute(
+            "SELECT browser, COUNT(*) as c FROM analytics_sessions GROUP BY browser ORDER BY c DESC LIMIT 5"
+        )).fetchall()}
 
-        country_rows = await conn.fetch("SELECT country, COUNT(*) as c FROM analytics_sessions WHERE country != 'unknown' AND country != '' GROUP BY country ORDER BY c DESC LIMIT 10")
-        countries = {row["country"]: row["c"] for row in country_rows}
+        countries = {row["country"]: row["c"] for row in await (await conn.execute(
+            "SELECT country, COUNT(*) as c FROM analytics_sessions WHERE country != 'unknown' AND country != '' GROUP BY country ORDER BY c DESC LIMIT 10"
+        )).fetchall()}
 
-        hourly_rows = await conn.fetch("SELECT EXTRACT(HOUR FROM timestamp)::int as hour, COUNT(*) as c FROM page_views GROUP BY hour ORDER BY hour")
-        hourly = {str(row["hour"]).zfill(2): row["c"] for row in hourly_rows}
+        hourly = {str(row["hour"]).zfill(2): row["c"] for row in await (await conn.execute(
+            "SELECT EXTRACT(HOUR FROM timestamp)::int as hour, COUNT(*) as c FROM page_views GROUP BY hour ORDER BY hour"
+        )).fetchall()}
 
-        page_rows = await conn.fetch("SELECT url, COUNT(*) as c FROM page_views GROUP BY url ORDER BY c DESC LIMIT 10")
-        top_pages = {row["url"]: row["c"] for row in page_rows}
+        top_pages = {row["url"]: row["c"] for row in await (await conn.execute(
+            "SELECT url, COUNT(*) as c FROM page_views GROUP BY url ORDER BY c DESC LIMIT 10"
+        )).fetchall()}
 
-        event_rows = await conn.fetch("SELECT event_type, element, COUNT(*) as c FROM analytics_events WHERE event_type != 'page_view' GROUP BY event_type, element ORDER BY c DESC LIMIT 10")
-        top_events = [{"event": row["event_type"], "element": row["element"], "count": row["c"]} for row in event_rows]
+        top_events = [{"event": row["event_type"], "element": row["element"], "count": row["c"]} for row in await (await conn.execute(
+            "SELECT event_type, element, COUNT(*) as c FROM analytics_events WHERE event_type != 'page_view' GROUP BY event_type, element ORDER BY c DESC LIMIT 10"
+        )).fetchall()]
 
         return {
             "total_pageviews": total_pageviews,
@@ -259,13 +256,15 @@ async def get_analytics_dashboard():
 
 async def get_recent_pageviews(limit: int = 50):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM page_views ORDER BY timestamp DESC LIMIT $1", limit)
-        return [dict(row) for row in rows]
+    async with pool.connection() as conn:
+        rows = await conn.execute("SELECT * FROM page_views ORDER BY timestamp DESC LIMIT %s", (limit,))
+        result = await rows.fetchall()
+        return [dict(row) for row in result]
 
 
 async def get_visitor_sessions(limit: int = 50):
     pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch("SELECT * FROM analytics_sessions ORDER BY last_seen DESC LIMIT $1", limit)
-        return [dict(row) for row in rows]
+    async with pool.connection() as conn:
+        rows = await conn.execute("SELECT * FROM analytics_sessions ORDER BY last_seen DESC LIMIT %s", (limit,))
+        result = await rows.fetchall()
+        return [dict(row) for row in result]
