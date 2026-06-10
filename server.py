@@ -91,10 +91,7 @@ def _cleanup_sessions():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    try:
-        await database.init_db()
-    except Exception:
-        print("WARNING: Database init failed, continuing without persistence")
+    await database.init_db()
     def cleanup_loop():
         while True:
             time.sleep(300)
