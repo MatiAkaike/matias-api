@@ -22,8 +22,7 @@ async def _get_conn():
         async with _conn_lock:
             if _conn is None:
                 _conn = await asyncio.to_thread(
-                    psycopg2.connect, DATABASE_URL, 
-                    **{"sslmode": "require"} if "render.com" in DATABASE_URL else {}
+                    psycopg2.connect, DATABASE_URL, connect_timeout=10
                 )
                 _conn.autocommit = True
     return _conn
