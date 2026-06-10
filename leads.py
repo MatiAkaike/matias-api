@@ -80,11 +80,16 @@ def _extract_lead_data(text: str) -> dict:
     if name_match:
         lead["nombre"] = name_match.group(1).strip()
 
-    # Company
+    # Company: "empresa X", "trabajo en X", "de X", "en X"
     comp_match = re.search(
-        r'(?:empresa|compañía|trabajo en|de la empresa)\s+[:\s]*"?([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ0-9\s&.-]{2,40})"?',
+        r'(?:empresa|compañía|trabajo en|de la empresa|de la compañía)\s+[:\s]*"?([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ0-9\s&.-]{2,40})"?',
         text, re.IGNORECASE
     )
+    if not comp_match:
+        comp_match = re.search(
+            r'(?:de|en)\s+([A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ0-9]{2,30}(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-záéíóúñ0-9]+){0,2})',
+            text, re.IGNORECASE
+        )
     if comp_match:
         lead["empresa"] = comp_match.group(1).strip().rstrip('.').rstrip(',')
 
