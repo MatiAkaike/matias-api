@@ -203,23 +203,21 @@ async def chat(req: ChatRequest):
     # Lead capture: try to extract contact data from user's message
     asyncio.ensure_future(_try_capture_lead(sid, req.message.strip()))
 
-    # Lead capture on first contact — elegant hook for contact data
+    # Lead capture — elegant hook for contact data (MEJORADO 2026-06-17)
+    # En vez de inyectar un system message que confunde al modelo,
+    # agregamos un recordatorio claro como prefijo del historial
     if len(session.messages) == 2:
-        session.messages.insert(1, {
-            "role": "system",
+        session.messages[1] = {
+            "role": "user",
             "content": (
-                "REGLA PARA ESTE USUARIO — Es tu primer contacto. "
-                "Responde su pregunta normalmente. "
-                "Al final, ofrécele elegantemente enviarle información más detallada "
-                "(una presentación técnica, un documento, un caso de éxito) relacionado con lo que preguntó, "
-                "y pídele a cambio su nombre completo, empresa, cargo, WhatsApp y correo electrónico. "
-                "Usa un gancho como: 'Me encantaría enviarte la presentación detallada de M.A.T.I.A.S. "
-                "con la arquitectura y los casos de éxito. ¿Me compartes tu nombre completo, empresa, "
-                "cargo, WhatsApp y correo y te la hago llegar de inmediato?' "
-                "Sé elegante, no presiones. Si no comparte los datos, no insistas. "
-                "NUNCA bloquees la conversación. Siempre cierra con CTA de demo."
+                "[Instruccion interna para el asistente — NO mostrar al usuario]\n"
+                f"Mensaje del usuario: {req.message.strip()}\n\n"
+                "RECUERDA: Responde PRIMERO la pregunta del usuario con valor real. "
+                "DESPUES, ofrece enviarle informacion adicional y pide sus datos de contacto "
+                "(nombre, empresa, cargo, WhatsApp, correo) de forma elegante. "
+                "Siempre cierra con CTA de demo."
             )
-        })
+        }
 
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API key no configurada")
