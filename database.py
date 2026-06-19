@@ -8,17 +8,36 @@ from datetime import datetime, timezone
 DB_PATH = os.getenv("SQLITE_PATH", str(Path(__file__).resolve().parent / "data" / "matias_chat.db"))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 
+# Supabase connection parts (evita problemas de URL encoding)
+SUPABASE_HOST = os.getenv("SUPABASE_HOST", "")
+SUPABASE_USER = os.getenv("SUPABASE_USER", "postgres")
+SUPABASE_PASSWORD = os.getenv("SUPABASE_PASSWORD", "")
+SUPABASE_PORT = os.getenv("SUPABASE_PORT", "6543")
+SUPABASE_DB = os.getenv("SUPABASE_DB", "postgres")
+
 _pg_pool = None
 _pg_lock = asyncio.Lock()
 
-# ── PostgreSQL connection (persistente en Render) ────────────────────
+# ── PostgreSQL connection ────────────────────────────────────────────
+
+def _build_dsn():
+    """Construye DSN sin errores de encoding en URL."""
+    if SUPABASE_HOST and SUPABASE_PASSWORD:
+        from urllib.parse import quote_plus
+        return (
+            f"postgresql://{SUPABASE_USER}:{quote_plus(SUPABASE_PASSWORD)}"
+            f"@{SUPABASE_HOST}:{SUPABASE_PORT}/{SUPABASE_DB}"
+        )
+    return DATABASE_URL
+
 
 async def _get_pg_pool():
     global _pg_pool
-    if _pg_pool is None and DATABASE_URL:
+    dsn = _build_dsn()
+    if _pg_pool is None and dsn:
         async with _pg_lock:
             if _pg_pool is None:
-                _pg_pool = await asyncpg.create_pool(DATABASE_URL, min_size=1, max_size=5)
+                _pg_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, ssl="require")
     return _pg_pool
 
 

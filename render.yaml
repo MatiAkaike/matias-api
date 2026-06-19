@@ -7,6 +7,16 @@ services:
     envVars:
       - key: DEEPSEEK_API_KEY
         sync: false
+      - key: SUPABASE_HOST
+        value: aws-1-us-west-2.pooler.supabase.com
+      - key: SUPABASE_PASSWORD
+        value: MatiGuti@2909*
+      - key: SUPABASE_USER
+        value: postgres.vnifbfypluszbukaebqq
+      - key: SUPABASE_PORT
+        value: "6543"
+      - key: SUPABASE_DB
+        value: postgres
       - key: CORS_ORIGINS
         value: https://www.akaike.lat,https://akaike.lat,https://matias-score.ai,https://www.matias-score.ai,http://localhost:5173
     plan: free
