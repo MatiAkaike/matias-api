@@ -7,8 +7,6 @@ services:
     envVars:
       - key: DEEPSEEK_API_KEY
         sync: false
-      - key: DATABASE_URL
-        value: postgresql://postgres.vnifbfypluszbukaebqq:***@2909*@aws-1-us-west-2.pooler.supabase.com:6543/postgres
       - key: CORS_ORIGINS
         value: https://www.akaike.lat,https://akaike.lat,https://matias-score.ai,https://www.matias-score.ai,http://localhost:5173
     plan: free
