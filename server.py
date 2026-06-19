@@ -49,6 +49,79 @@ BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 
+# ─── Alerta de abuso por IP ───────────────────────────────────────────────────
+
+ABUSE_THRESHOLD = int(os.getenv("ABUSE_SESSION_THRESHOLD", "20"))  # sesiones por IP
+ABUSE_COOLDOWN = int(os.getenv("ABUSE_ALERT_COOLDOWN", "3600"))    # segundos entre alertas por IP
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8957187826:AAGzDUwn6iW_olqpJVz2KNpWGybaoF3R8ro")
+OSCAR_CHAT_ID = os.getenv("OSCAR_TELEGRAM_CHAT_ID", "8740011589")
+
+# {ip: {"sessions": set(), "last_alert": timestamp}}
+ip_tracker: dict[str, dict] = {}
+ip_tracker_lock = threading.Lock()
+
+def _get_client_ip(request: Request) -> str:
+    """Extrae la IP real del cliente (respeta proxies como Render/Cloudflare)."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    cf_ip = request.headers.get("CF-Connecting-IP", "")
+    if cf_ip:
+        return cf_ip
+    return request.client.host if request.client else "unknown"
+
+
+async def _send_abuse_alert(ip: str, session_count: int, last_session_id: str):
+    """Envía Telegram a Oscar via el bot de Amelia cuando se detecta abuso."""
+    msg = (
+        f"🚨 <b>ALERTA DE ABUSO — M.A.T.I.A.S. Web</b>\n\n"
+        f"<b>IP:</b> <code>{ip}</code>\n"
+        f"<b>Sesiones activas:</b> {session_count}\n"
+        f"<b>Última sesión:</b> <code>{last_session_id}</code>\n\n"
+        f"⚠️ Una misma IP ha abierto {session_count}+ conversaciones. "
+        f"Podría ser un bot, ataque DoS o scraping intensivo.\n\n"
+        f"📊 <a href=\"https://matias-api-ka16.onrender.com/api/interactions/stats\">Ver estadísticas</a>"
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={
+                    "chat_id": OSCAR_CHAT_ID,
+                    "text": msg,
+                    "parse_mode": "HTML",
+                    "disable_web_page_preview": True,
+                },
+            )
+            if resp.status_code != 200:
+                print(f"[ABUSE-ALERT] Error Telegram: {resp.status_code} {resp.text}")
+            else:
+                print(f"[ABUSE-ALERT] Notificado a Oscar — IP {ip} con {session_count} sesiones")
+    except Exception as e:
+        print(f"[ABUSE-ALERT] Fallo al enviar Telegram: {e}")
+
+
+def _check_ip_abuse(ip: str, session_id: str) -> bool:
+    """Registra sesión por IP. Si alcanza el umbral, dispara alerta.
+    Retorna True si se disparó alerta."""
+    if ip == "unknown" or ip.startswith("127.") or ip.startswith("10.") or ip.startswith("192.168."):
+        return False  # ignorar IPs locales
+
+    now = time.time()
+    with ip_tracker_lock:
+        if ip not in ip_tracker:
+            ip_tracker[ip] = {"sessions": set(), "last_alert": 0}
+
+        entry = ip_tracker[ip]
+        entry["sessions"].add(session_id)
+        count = len(entry["sessions"])
+
+        # ¿Disparar alerta?
+        if count >= ABUSE_THRESHOLD and (now - entry["last_alert"]) > ABUSE_COOLDOWN:
+            entry["last_alert"] = now
+            return True
+    return False
+
 # ─── CORS origins ────────────────────────────────────────────────────────────
 
 ALLOWED_ORIGINS = [
@@ -168,10 +241,16 @@ async def health():
 
 
 @app.post("/api/session/new", response_model=SessionResponse)
-async def new_session():
+async def new_session(request: Request):
     sid = str(uuid.uuid4())
     with sessions_lock:
         sessions[sid] = Session(sid)
+
+    # Trackear IP por nueva sesión
+    client_ip = _get_client_ip(request)
+    if _check_ip_abuse(client_ip, sid):
+        asyncio.ensure_future(_send_abuse_alert(client_ip, len(ip_tracker.get(client_ip, {}).get("sessions", set())), sid))
+
     return SessionResponse(session_id=sid)
 
 
@@ -184,11 +263,14 @@ async def delete_session(session_id: str):
 
 
 @app.post("/api/chat", response_model=ChatResponse)
-async def chat(req: ChatRequest):
+async def chat(req: ChatRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacio")
 
+    # ── Detección de abuso por IP ──
+    client_ip = _get_client_ip(request)
     sid = req.session_id
+
     with sessions_lock:
         if sid and sid in sessions:
             session = sessions[sid]
@@ -196,6 +278,10 @@ async def chat(req: ChatRequest):
             sid = str(uuid.uuid4())
             session = Session(sid)
             sessions[sid] = session
+
+    # Trackear IP y verificar umbral de abuso
+    if _check_ip_abuse(client_ip, sid):
+        asyncio.ensure_future(_send_abuse_alert(client_ip, len(ip_tracker.get(client_ip, {}).get("sessions", set())), sid))
 
     session.add_message("user", req.message.strip())
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
