@@ -423,16 +423,18 @@ class PresentacionResponse(PydanticBase):
     source: str = "conocimiento_interno"
 
 PRESENTACION_SYSTEM = (
-    "Eres el asistente virtual de Akaike Credit Risk Solutions. "
-    "Respondes preguntas sobre la diapositiva que el usuario esta viendo.\n\n"
+    "Eres el asistente virtual de Akaike Credit Risk Solutions experto en las presentaciones corporativas. "
+    "Conoces en profundidad los 37 documentos de la compañia.\n\n"
     "REGLAS DE ORO:\n"
-    "1. Solo respondes con informacion TEXTUAL que aparezca en [DIAPOSITIVA ACTUAL] o [CONTEXTO ADICIONAL].\n"
-    "2. PROHIBIDO inferir, deducir o completar. Si el texto no lo dice, NO LO DIGAS.\n"
-    "3. ZERO-PII.\n"
-    "4. Si el texto NO contiene la respuesta: 'Esa informacion no esta en la presentacion. Agenda una reunion con Oscar Gutierrez, CEO de Akaike: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
-    "5. Si el usuario pide hablar con un asesor, demo, reunion o contacto: 'Agenda directamente con Oscar Gutierrez, CEO de Akaike: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
-    "6. NUNCA inventes emails, telefonos ni URLs.\n\n"
-    "ESTILO: Maximo 3 lineas. Directo. SIN markdown ni asteriscos.\n"
+    "1. El texto de [DIAPOSITIVA ACTUAL] es SOLO un ancla. Usa [CONTEXTO ADICIONAL] para DAR DETALLE.\n"
+    "2. Si el usuario pregunta sobre algo que la diapositiva solo menciona, EXPLICALO con el CONTEXTO ADICIONAL.\n"
+    "3. NUNCA digas 'no se detalla' o 'solo menciona' si hay informacion en el CONTEXTO ADICIONAL.\n"
+    "4. PROHIBIDO inferir o inventar. Solo datos textuales de las fuentes.\n"
+    "5. ZERO-PII.\n"
+    "6. Si de verdad no hay nada: 'Esa informacion no esta en las presentaciones. Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
+    "7. Si piden asesor, demo o contacto: 'Agenda con Oscar Gutierrez, CEO de Akaike: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
+    "8. NUNCA inventes emails ni telefonos.\n\n"
+    "ESTILO: 2-3 parrafos. Explica con sustancia. SIN markdown.\n"
 )
 
 @app.options("/api/presentacion")
@@ -459,7 +461,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
         1: "El Impacto: aumento en la tasa de aprobacion con modelos de IA. reduccion en la tasa de morosidad. Fuente: Informe de Impacto de IA en Credito - Upstart vs. grandes bancos de EE.UU., Reporte SEC 2024.",
         2: "Nosotros: Somos expertos en el desarrollo de modelos de Riesgo de Credito con IA. Optimizamos la cartera, reducimos la morosidad y mejoramos la rentabilidad de entidades en distintos sectores. Reconocidos por StartupAndes, AWS, MassChallenge, Colombia Fintech.",
         3: "El Problema: de las perdidas por mora se atribuye a una mala evaluacion de riesgo crediticio. Por eso nuestros modelos se entrenan con los datos de la cartera. Fuente: Van Gestel & Baesens - Credit Risk Management: Basic Concepts, 2009. Grafo neuronal vivo.",
-        4: "La Solucion: Una metodologia en cinco pasos. Incremento esperado del ROI: 5:1.",
+        4: "La Solucion: Una metodologia en cinco pasos. Incremento esperado del ROI: 5:1. PASO 1 - Analisis forense de la informacion: entender que datos tiene la entidad y como se toman las decisiones hoy. PASO 2 - Curacion y transformacion de datos: limpiar, unificar y preparar las fuentes internas y externas. PASO 3 - Ingenieria de variables: crear variables predictivas con poder discriminante real. PASO 4 - Entrenamiento del modelo: la IA aprende patrones de riesgo de los datos historicos. PASO 5 - Implementacion y monitoreo: el modelo se despliega en produccion con seguimiento continuo. Esta metodologia se ha refinado durante 19 anos de experiencia con mas de 250 proyectos en 16 entidades.",
         5: "El Producto - M.A.T.I.A.S.: Modelo Analitico Transformador en Inteligencias Artificiales Scoring. Un API de decision que recibe parametros del cliente, consulta fuentes y responde aprobado o rechazado. Consume Datacredito/Experian, TransUnion, Claro, Parafiscales, entre otros. IMPORTANTE: las calificaciones del modelo NO incluyen el costo de la consulta a Datacredito ni a centrales de riesgo. Cada entidad debe tener su propio contrato con el buro de credito.",
         6: "Capacidades: Una IA, multiples posibilidades. M.A.T.I.A.S. se entrena para originacion, comportamiento, cobranza y analisis conversacional. Credit Scoring, Behaviour Scoring, Collection Scoring, Copilot.",
         7: "Experiencia: +250 modelos y proyectos, 16+ entidades aliadas. Implementacion de software para credito y Credit Scoring personalizado.",
