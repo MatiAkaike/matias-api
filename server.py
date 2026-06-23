@@ -407,6 +407,78 @@ async def get_leads(limit: int = 50):
     return {"total": count, "leads": rows}
 
 
+# ─── Agente de Presentaciones — RAG sobre conocimiento interno ──────────
+
+from pydantic import BaseModel as PydanticBase
+
+class PresentacionRequest(PydanticBase):
+    message: str
+    session_id: str = "presentacion"
+    name: str = "Invitado"
+
+class PresentacionResponse(PydanticBase):
+    reply: str
+    session_id: str
+    source: str = "conocimiento_interno"
+
+PRESENTACION_SYSTEM = """Eres un asistente virtual de Akaike Credit Risk Solutions. SOLO puedes responder usando la información proporcionada en el CONTEXTO de abajo.
+
+REGLAS ABSOLUTAS:
+1. SOLO usas el CONTEXTO proporcionado. No tienes conocimiento propio, ni de internet, ni de nada externo.
+2. Si la respuesta NO está en el CONTEXTO, decí EXACTAMENTE: "Esta información no está disponible en las presentaciones. Si querés, podés contactar directamente a Oscar Gutiérrez, CEO de Akaike: 📧 oscar@akaike.co | 📱 +57 313 412 4795 | 📅 https://calendar.app.google/YhY1KSgjktrRrcBb6"
+3. PROHIBIDO mencionar nombres de empresas, clientes o entidades que aparezcan en el contexto. Si un dato incluye un nombre de empresa, reemplazalo por "una entidad financiera", "un cliente", "una fintech", etc.
+4. PROHIBIDO inventar datos. Si el contexto no tiene un número, no lo des.
+5. Respondé en español, en máximo 3 párrafos. Sé profesional pero cercano.
+6. NO uses formato HTML. Solo texto plano con emojis.
+7. Si te preguntan quién sos: "Soy el asistente virtual de Akaike Credit Risk Solutions, entrenado con el conocimiento de sus presentaciones corporativas."
+"""
+
+@app.post("/api/presentacion", response_model=PresentacionResponse)
+async def presentacion_chat(req: PresentacionRequest):
+    import knowledge_base
+
+    # Buscar contexto relevante
+    context = knowledge_base.search_relevant(req.message, max_chars=8000)
+    if not context:
+        return PresentacionResponse(
+            reply="No encontré información sobre eso en las presentaciones. Si querés, contactá directamente a Oscar Gutiérrez, CEO de Akaike:\n📧 oscar@akaike.co\n📱 +57 313 412 4795\n📅 https://calendar.app.google/YhY1KSgjktrRrcBb6",
+            session_id=req.session_id,
+        )
+
+    # Llamar a DeepSeek
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        return PresentacionResponse(
+            reply="El servicio no está disponible en este momento. Contactá a Oscar Gutiérrez:\n📧 oscar@akaike.co | 📱 +57 313 412 4795",
+            session_id=req.session_id,
+        )
+
+    try:
+        async with httpx.AsyncClient(timeout=60) as client:
+            r = await client.post(
+                "https://api.deepseek.com/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": "deepseek-chat",
+                    "messages": [
+                        {"role": "system", "content": PRESENTACION_SYSTEM},
+                        {"role": "user", "content": f"CONTEXTO (única fuente de verdad):\n{context}\n\nPREGUNTA: {req.message}"},
+                    ],
+                    "temperature": 0.3,
+                    "max_tokens": 800,
+                },
+            )
+            data = r.json()
+            reply = data["choices"][0]["message"]["content"]
+    except Exception:
+        reply = "No pude procesar tu consulta en este momento. Contactá a Oscar Gutiérrez:\n📧 oscar@akaike.co | 📱 +57 313 412 4795\n📅 https://calendar.app.google/YhY1KSgjktrRrcBb6"
+
+    return PresentacionResponse(reply=reply, session_id=req.session_id)
+
+
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
