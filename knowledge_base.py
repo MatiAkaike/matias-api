@@ -49,8 +49,8 @@ def _tokenize(text: str) -> set[str]:
     """Extrae stems únicos de un texto, incluyendo números y porcentajes."""
     # Palabras en español (3+ letras)
     words = re.findall(r"[a-záéíóúñ]{3,}", text.lower())
-    # Números significativos (incluyendo porcentajes, ratios como 5:1, años)
-    numbers = re.findall(r"\d+%|\d+:\d+|\b20\d{2}\b|\d+[.,]?\d*\s*(millones|mil|billones|%|por ciento)", text.lower())
+    # Números significativos (porcentajes, ratios, años, números > 9)
+    numbers = re.findall(r"\d+%|\d+:\d+|\b20\d{2}\b|\b\d{2,}\b", text.lower())
     
     stems = set()
     for w in words:
