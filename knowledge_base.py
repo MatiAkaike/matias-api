@@ -46,14 +46,23 @@ def _stem(word: str) -> str:
 
 
 def _tokenize(text: str) -> set[str]:
-    """Extrae stems únicos de un texto."""
+    """Extrae stems únicos de un texto, incluyendo números y porcentajes."""
+    # Palabras en español (3+ letras)
     words = re.findall(r"[a-záéíóúñ]{3,}", text.lower())
+    # Números significativos (incluyendo porcentajes, ratios como 5:1, años)
+    numbers = re.findall(r"\d+%|\d+:\d+|\b20\d{2}\b|\d+[.,]?\d*\s*(millones|mil|billones|%|por ciento)", text.lower())
+    
     stems = set()
     for w in words:
         if w not in STOP_WORDS:
             s = _stem(w)
-            if len(s) >= 3:
+            if len(s) >= 2:
                 stems.add(s)
+    
+    for n in numbers:
+        normalized = n.strip().replace(" ", "").replace(",", ".")
+        stems.add(normalized)
+    
     return stems
 
 
