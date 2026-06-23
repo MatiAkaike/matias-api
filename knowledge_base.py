@@ -7,7 +7,10 @@ import re
 from pathlib import Path
 from typing import Optional
 
-KB_DIR = "/Volumes/OpenClaw/Conocimiento Presentaciones"
+KB_DIR = os.environ.get(
+    "KB_DIR",
+    str(Path(__file__).resolve().parent / "conocimiento")
+)
 
 _docs: list[dict] = []
 _loaded = False
