@@ -1,0 +1,81 @@
+# Index
+
+Catalogo orientado al contenido de la wiki.
+
+- [[API REST e integracion]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Arquitectura de Seguridad de M.A.T.I.A.S. COPILOT]] — Arquitectura LLM Zero-PII y render seguro.
+- [[Buro de credito]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Cobranza inteligente]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Como se entrena M.A.T.I.A.S.]] — Documento base sobre entrenamiento y datos.
+- [[Cuenta - Agaval]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Asomicrofinanzas]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - ASYCO]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Bancoomeva]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Camilo Monsalve]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Coomeva]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Coopicredito]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Coprocenva]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Corbeta]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Cristhian Camilo Cespedes]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - DTA Capital]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - El Salvador]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Financredicoop]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Fondo CREA]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Fondo J&J]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Fundacion Amanecer]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Fundacion Berta Martinez]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - GrowBank]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Horizonte SAS]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Kreofuturo]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Modelos Personalizados de IA]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Originacion de libranza pensionados]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Presta En Linea]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Rambler]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Cuenta - Tu Respaldo Seguro]] — Perfil de cuenta/prospecto con reuniones y necesidades detectadas.
+- [[Data historica de cartera]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Fuentes alternativas de informacion]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Gobernanza y auditoria de modelos]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Implementacion de M.A.T.I.A.S. sin data historica propia]] — Modelo experto, hibrido y propio.
+- [[Libranza]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[M.A.T.I.A.S. API v1]] — Documentacion tecnica de integracion API REST.
+- [[M.A.T.I.A.S. COPILOT]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[M.A.T.I.A.S. Credit Score]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[M.A.T.I.A.S. y M.A.T.I.A.S. COPILOT]] — Definicion de score personalizado y copiloto explicable.
+- [[Mapa comercial de prospectos M.A.T.I.A.S.]] — Panorama consolidado de cuentas, reuniones y temas dominantes para priorizar seguimiento comercial.
+- [[Mapa tecnico de M.A.T.I.A.S.]] — Sintesis de arquitectura, integraciones, seguridad, datos, modelos e implementacion.
+- [[Microfinanzas y sector solidario]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Modelo experto sin data historica]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Modelo personalizado por entidad]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Originacion automatizada]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Precios oficiales M.A.T.I.A.S. 2026]] — Politica comercial y parrilla de planes.
+- [[Pricing y propuesta comercial]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Requerimientos Tecnicos M.A.T.I.A.S.]] — Descripcion tecnica del producto y arquitectura multi-tenant.
+- [[Reunion - Agaval - 2026-03-16]] — Resumen de la reunion con Agaval del 2026-03-16 sobre Presentacion M.A.T.I.A.S..
+- [[Reunion - Asomicrofinanzas - 2026-01-23]] — Resumen de la reunion con Asomicrofinanzas del 2026-01-23 sobre IA para credito.
+- [[Reunion - ASYCO - 2026-04-22]] — Resumen de la reunion con ASYCO del 2026-04-22 sobre IA para credito.
+- [[Reunion - Bancoomeva - 2026-04-21]] — Resumen de la reunion con Bancoomeva del 2026-04-21 sobre Herramienta de gestion de credito.
+- [[Reunion - Camilo Monsalve - 2026-05-14]] — Resumen de la reunion con Camilo Monsalve del 2026-05-14 sobre IA de credito.
+- [[Reunion - Coomeva - 2026-04-17]] — Resumen de la reunion con Coomeva del 2026-04-17 sobre IA para credito.
+- [[Reunion - Coopicredito - 2026-03-04]] — Resumen de la reunion con Coopicredito del 2026-03-04 sobre M.A.T.I.A.S..
+- [[Reunion - Coprocenva - 2026-01-29]] — Resumen de la reunion con Coprocenva del 2026-01-29 sobre M.A.T.I.A.S..
+- [[Reunion - Corbeta - 2026-05-22]] — Resumen de la reunion con Corbeta del 2026-05-22 sobre IA para credito.
+- [[Reunion - Cristhian Camilo Cespedes - 2026-05-25]] — Resumen de la reunion con Cristhian Camilo Cespedes del 2026-05-25 sobre Referido / financiera.
+- [[Reunion - DTA Capital - 2026-05-21]] — Resumen de la reunion con DTA Capital del 2026-05-21 sobre IA para credito y cobranza.
+- [[Reunion - El Salvador - 2026-04-10]] — Resumen de la reunion con El Salvador del 2026-04-10 sobre Entrada a mercado.
+- [[Reunion - Financredicoop - 2026-03-30]] — Resumen de la reunion con Financredicoop del 2026-03-30 sobre Presentacion M.A.T.I.A.S..
+- [[Reunion - Fondo CREA - 2026-01-26]] — Resumen de la reunion con Fondo CREA del 2026-01-26 sobre IA para credito.
+- [[Reunion - Fondo J&J - 2026-03-18]] — Resumen de la reunion con Fondo J&J del 2026-03-18 sobre Presentacion M.A.T.I.A.S..
+- [[Reunion - Fundacion Amanecer - 2026-04-08]] — Resumen de la reunion con Fundacion Amanecer del 2026-04-08 sobre IA para credito.
+- [[Reunion - Fundacion Berta Martinez - 2026-03-13]] — Resumen de la reunion con Fundacion Berta Martinez del 2026-03-13 sobre Presentacion M.A.T.I.A.S..
+- [[Reunion - GrowBank - 2026-05-29]] — Resumen de la reunion con GrowBank del 2026-05-29 sobre IA para credito.
+- [[Reunion - Horizonte SAS - 2026-06-10]] — Resumen de la reunion con Horizonte SAS del 2026-06-10 sobre IA para credito.
+- [[Reunion - Horizonte SAS - 2026-06-23]] — Resumen de la reunion con Horizonte SAS del 2026-06-23 sobre Continuacion IA de credito.
+- [[Reunion - Kreofuturo - 2026-06-19]] — Resumen de la reunion con Kreofuturo del 2026-06-19 sobre IA de credito.
+- [[Reunion - Modelos Personalizados de IA - 2026-03-09]] — Resumen de la reunion con Modelos Personalizados de IA del 2026-03-09 sobre Modelos personalizados.
+- [[Reunion - Originacion de libranza pensionados - 2026-05-07]] — Resumen de la reunion con Originacion de libranza pensionados del 2026-05-07 sobre Fabrica de credito automatizada.
+- [[Reunion - Presta En Linea - 2026-04-28]] — Resumen de la reunion con Presta En Linea del 2026-04-28 sobre M.A.T.I.A.S..
+- [[Reunion - Rambler - 2026-05-27]] — Resumen de la reunion con Rambler del 2026-05-27 sobre IA para credito.
+- [[Reunion - Tu Respaldo Seguro - 2026-06-11]] — Resumen de la reunion con Tu Respaldo Seguro del 2026-06-11 sobre IA para credito.
+- [[Seguridad y privacidad]] — Concepto transversal detectado en transcripciones y documentos base.
+- [[Seguridad y Privacidad de M.A.T.I.A.S. COPILOT para clientes]] — Version cliente de privacidad, seguridad y uso responsable.
+- [[Stack actual de M.A.T.I.A.S.]] — Stack Python, FastAPI, AWS Serverless, PostgreSQL y DataCredito.
