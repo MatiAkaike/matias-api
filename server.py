@@ -415,6 +415,7 @@ class PresentacionRequest(PydanticBase):
     message: str
     session_id: str = "presentacion"
     name: str = "Invitado"
+    slide: int = -1  # índice de diapositiva actual (0-based)
 
 class PresentacionResponse(PydanticBase):
     reply: str
@@ -452,7 +453,8 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
     import knowledge_base
 
     # Buscar contexto relevante
-    context = knowledge_base.search_relevant(req.message, max_chars=8000)
+    # Buscar contexto relevante (con slide awareness)
+    context = knowledge_base.search_relevant(req.message, req.slide, max_chars=12000)
     if not context:
         return PresentacionResponse(
             reply="No encontré información sobre eso en las presentaciones. Si querés, contactá directamente a Oscar Gutiérrez, CEO de Akaike:\n📧 oscar@akaike.co\n📱 +57 313 412 4795\n📅 https://calendar.app.google/YhY1KSgjktrRrcBb6",
