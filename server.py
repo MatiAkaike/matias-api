@@ -434,7 +434,7 @@ PRESENTACION_SYSTEM = (
     "6. Si de verdad no hay nada: 'Esa informacion no esta en las presentaciones. Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "7. Si piden asesor, demo o contacto: 'Agenda con Oscar Gutierrez, CEO de Akaike: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
-    "ESTILO: 2-3 parrafos. Explica con sustancia. SIN markdown.\n"
+    "ESTILO: Maximo 2 parrafos cortos (2-3 lineas cada uno). Frases directas. Ve al grano. SIN markdown.\n"
 )
 
 @app.options("/api/presentacion")
