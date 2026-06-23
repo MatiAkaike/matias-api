@@ -434,7 +434,9 @@ PRESENTACION_SYSTEM = (
     "6. Si no hay respuesta: 'Agenda con Oscar Gutierrez, CEO: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "7. Si piden asesor o demo: 'Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
-    "ESTILO: Maximo 2 parrafos cortos. Frases directas. SIN markdown.\n"
+    "ESTILO: Usa <b>negritas</b> para destacar conceptos clave, saltos de linea para separar ideas. "
+    "Las URLs van como <a href='URL' target='_blank'>texto</a> para que den clic. "
+    "Maximo 2 parrafos con buena separacion visual. Profesional y moderno.\n"
 )
 
 @app.options("/api/presentacion")
