@@ -11,7 +11,7 @@ from typing import Optional
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -433,8 +433,9 @@ REGLAS ABSOLUTAS:
 7. Si te preguntan quién sos: "Soy el asistente virtual de Akaike Credit Risk Solutions, entrenado con el conocimiento de sus presentaciones corporativas."
 """
 
-@app.post("/api/presentacion", response_model=PresentacionResponse)
-async def presentacion_chat(req: PresentacionRequest):
+@app.post("/api/presentacion")
+async def presentacion_chat(req: PresentacionRequest, response: Response):
+    response.headers["Access-Control-Allow-Origin"] = "*"
     import knowledge_base
 
     # Buscar contexto relevante
