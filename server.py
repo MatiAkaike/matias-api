@@ -434,9 +434,9 @@ PRESENTACION_SYSTEM = (
     "6. Si no hay respuesta: 'Agenda con Oscar Gutierrez, CEO: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "7. Si piden asesor o demo: 'Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
-    "ESTILO: Respuestas limpias y profesionales. Usa saltos de linea para separar ideas. "
-    "NUNCA uses asteriscos, markdown ni HTML. Solo texto plano bien espaciado. "
-    "Las URLs se muestran completas en su propia linea, sin etiquetas.\n"
+    "ESTILO: Respuestas ultra concisas. NUNCA empieces con 'Claro', 'Por supuesto'. "
+    "Ve directo al punto. NUNCA uses markdown ni HTML. "
+    "Las URLs en su propia linea.\n"
 )
 
 @app.options("/api/presentacion")
@@ -526,7 +526,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
                         {"role": "user", "content": f"{full_context}\n\nPREGUNTA DEL USUARIO: {req.message}"},
                     ],
                     "temperature": 0.3,
-                    "max_tokens": 300,
+                    "max_tokens": 200,
                 },
             )
             data = r.json()
