@@ -526,7 +526,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
                         {"role": "user", "content": f"{full_context}\n\nPREGUNTA DEL USUARIO: {req.message}"},
                     ],
                     "temperature": 0.3,
-                    "max_tokens": 800,
+                    "max_tokens": 300,
                 },
             )
             data = r.json()
