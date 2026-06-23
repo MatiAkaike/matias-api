@@ -433,6 +433,19 @@ REGLAS ABSOLUTAS:
 7. Si te preguntan quién sos: "Soy el asistente virtual de Akaike Credit Risk Solutions, entrenado con el conocimiento de sus presentaciones corporativas."
 """
 
+@app.options("/api/presentacion")
+async def presentacion_preflight():
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+        }
+    )
+
+
 @app.post("/api/presentacion")
 async def presentacion_chat(req: PresentacionRequest, response: Response):
     response.headers["Access-Control-Allow-Origin"] = "*"
