@@ -456,12 +456,39 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
     response.headers["Access-Control-Allow-Origin"] = "*"
     import knowledge_base
 
-    # Buscar contexto relevante
-    # Buscar contexto relevante (con slide awareness)
-    context = knowledge_base.search_relevant(req.message, req.slide, max_chars=12000)
-    if not context:
+    # Texto de cada diapositiva
+    slides = {
+        0: "Portada: Akaike Credit Risk Solutions. Inteligencia Artificial para credito, entrenada con sus datos. www.akaike.co",
+        1: "El Impacto: aumento en la tasa de aprobacion con modelos de IA. reduccion en la tasa de morosidad. Fuente: Informe de Impacto de IA en Credito - Upstart vs. grandes bancos de EE.UU., Reporte SEC 2024.",
+        2: "Nosotros: Somos expertos en el desarrollo de modelos de Riesgo de Credito con IA. Optimizamos la cartera, reducimos la morosidad y mejoramos la rentabilidad de entidades en distintos sectores. Reconocidos por StartupAndes, AWS, MassChallenge, Colombia Fintech.",
+        3: "El Problema: de las perdidas por mora se atribuye a una mala evaluacion de riesgo crediticio. Por eso nuestros modelos se entrenan con los datos de la cartera. Fuente: Van Gestel & Baesens - Credit Risk Management: Basic Concepts, 2009. Grafo neuronal vivo.",
+        4: "La Solucion: Una metodologia en cinco pasos. Incremento esperado del ROI: 5:1.",
+        5: "El Producto - M.A.T.I.A.S.: Modelo Analitico Transformador en Inteligencias Artificiales Scoring. Un API de decision que recibe parametros del cliente, consulta fuentes y responde aprobado o rechazado. Consume Datacredito/Experian, TransUnion, Claro, Parafiscales, entre otros. IMPORTANTE: las calificaciones del modelo NO incluyen el costo de la consulta a Datacredito ni a centrales de riesgo. Cada entidad debe tener su propio contrato con el buro de credito.",
+        6: "Capacidades: Una IA, multiples posibilidades. M.A.T.I.A.S. se entrena para originacion, comportamiento, cobranza y analisis conversacional. Credit Scoring, Behaviour Scoring, Collection Scoring, Copilot.",
+        7: "Experiencia: +250 modelos y proyectos, 16+ entidades aliadas. Implementacion de software para credito y Credit Scoring personalizado.",
+        8: "Fundador: Oscar Gutierrez M., CEO y Fundador. Economista con posgrado en Riesgos Financieros. oscar@akaike.co",
+        9: "Representantes regionales: Presencia en Centroamerica, Ecuador, Colombia y Mexico. Javier Hidalgo, Ingrid Restrepo, Carlos Rodriguez.",
+        10: "Planes: Starter, Scale, Corporate, Enterprise Pro. Cada plan incluye M.A.T.I.A.S. Copilot con diferentes niveles de usuarios y capacidad.",
+        11: "Cierre: Es hora de que su compania destaque con Inteligencia Propia. Contacto: Oscar Gutierrez, +57 313 412 4795, oscar@akaike.co",
+    }
+
+    # CONTEXTO PRIMARIO: texto de la diapositiva actual
+    slide_text = slides.get(req.slide, "")
+    if slide_text:
+        slide_context = f"[DIAPOSITIVA ACTUAL - texto visible]\n{slide_text}\n[/DIAPOSITIVA ACTUAL]\n\n"
+    else:
+        slide_context = ""
+
+    # CONTEXTO SECUNDARIO: knowledge base
+    kb_context = knowledge_base.search_relevant(req.message, req.slide, max_chars=8000)
+
+    full_context = slide_context
+    if kb_context:
+        full_context += f"[CONTEXTO ADICIONAL]\n{kb_context}\n[/CONTEXTO ADICIONAL]"
+
+    if not full_context.strip():
         return PresentacionResponse(
-            reply="No encontré información sobre eso en las presentaciones. Si querés, contactá directamente a Oscar Gutiérrez, CEO de Akaike:\n📧 oscar@akaike.co\n📱 +57 313 412 4795\n📅 https://calendar.app.google/YhY1KSgjktrRrcBb6",
+            reply="Esa información no está en la presentación. Contactá a Oscar Gutiérrez, CEO de Akaike: 📧 oscar@akaike.co | 📱 +57 313 412 4795 | 📅 https://calendar.app.google/YhY1KSgjktrRrcBb6",
             session_id=req.session_id,
         )
 
@@ -469,7 +496,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not api_key:
         return PresentacionResponse(
-            reply="El servicio no está disponible en este momento. Contactá a Oscar Gutiérrez:\n📧 oscar@akaike.co | 📱 +57 313 412 4795",
+            reply="Servicio no disponible. Contactá a Oscar: 📧 oscar@akaike.co | 📱 +57 313 412 4795",
             session_id=req.session_id,
         )
 
@@ -485,7 +512,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
                     "model": "deepseek-chat",
                     "messages": [
                         {"role": "system", "content": PRESENTACION_SYSTEM},
-                        {"role": "user", "content": f"CONTEXTO (única fuente de verdad):\n{context}\n\nPREGUNTA: {req.message}"},
+                        {"role": "user", "content": f"{full_context}\n\nPREGUNTA DEL USUARIO: {req.message}"},
                     ],
                     "temperature": 0.3,
                     "max_tokens": 800,
