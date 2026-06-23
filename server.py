@@ -122,11 +122,11 @@ def _check_ip_abuse(ip: str, session_id: str) -> bool:
             return True
     return False
 
-# ─── CORS origins ────────────────────────────────────────────────────────────
+# ─── CORS origins — abierto para presentaciones y widgets ─────────────────────
 
 ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "https://www.akaike.lat,https://akaike.lat,https://matias-score.ai,https://www.matias-score.ai,http://localhost:5173").split(",")
+    for origin in os.getenv("CORS_ORIGINS", "*").split(",")
     if origin.strip()
 ]
 
