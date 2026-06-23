@@ -434,9 +434,9 @@ PRESENTACION_SYSTEM = (
     "6. Si no hay respuesta: 'Agenda con Oscar Gutierrez, CEO: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "7. Si piden asesor o demo: 'Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
-    "ESTILO: Usa <b>negritas</b> para destacar conceptos clave, saltos de linea para separar ideas. "
-    "Las URLs van como <a href='URL' target='_blank'>texto</a> para que den clic. "
-    "Maximo 2 parrafos con buena separacion visual. Profesional y moderno.\n"
+    "ESTILO: Respuestas limpias y profesionales. Usa saltos de linea para separar ideas. "
+    "NUNCA uses asteriscos, markdown ni HTML. Solo texto plano bien espaciado. "
+    "Las URLs se muestran completas en su propia linea, sin etiquetas.\n"
 )
 
 @app.options("/api/presentacion")
@@ -475,6 +475,16 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
 
     # CONTEXTO PRIMARIO: texto de la diapositiva actual
     slide_text = slides.get(req.slide, "")
+    
+    # DETECCIÓN DE CONTACTO: responder directo sin LLM
+    contacto_keywords = ["asesor", "demo", "reunión", "reunion", "contacto", "contactar",
+                        "comuníqueme", "comuniqueme", "hablar con", "llamar", "cita",
+                        "agendar", "agenda", "calendario", "whatsapp"]
+    if any(kw in req.message.lower() for kw in contacto_keywords):
+        return PresentacionResponse(
+            reply="Agenda directamente con Oscar Gutierrez, CEO de Akaike: https://calendar.app.google/YhY1KSgjktrRrcBb6",
+            session_id=req.session_id,
+        )
     if slide_text:
         slide_context = f"[DIAPOSITIVA ACTUAL - texto visible]\n{slide_text}\n[/DIAPOSITIVA ACTUAL]\n\n"
     else:
