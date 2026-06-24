@@ -45,11 +45,17 @@ async def init_leads_db():
                 correo TEXT,
                 mensaje_original TEXT,
                 timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                notified INTEGER DEFAULT 0
+                notified INTEGER DEFAULT 0,
+                ip TEXT DEFAULT ''
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_ts ON leads(timestamp)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_leads_session ON leads(session_id)")
+        # Migración: agregar columna ip si no existe
+        try:
+            cur.execute("ALTER TABLE leads ADD COLUMN ip TEXT DEFAULT ''")
+        except Exception:
+            pass  # ya existe
         cur.close()
     except Exception:
         pass
@@ -118,7 +124,7 @@ def _extract_lead_data(text: str) -> dict:
     return {}
 
 
-async def save_lead(session_id: str, text: str) -> dict | None:
+async def save_lead(session_id: str, text: str, ip: str = "") -> dict | None:
     """Extract and save lead data. Returns the lead if captured."""
     if not DATABASE_URL:
         return None
@@ -141,16 +147,19 @@ async def save_lead(session_id: str, text: str) -> dict | None:
                 if v:
                     sets.append(f"{k} = %s")
                     vals.append(v)
+            if ip:
+                sets.append("ip = %s")
+                vals.append(ip)
             if sets:
                 vals.append(session_id)
                 cur.execute(f"UPDATE leads SET {', '.join(sets)} WHERE session_id = %s", vals)
         else:
             now = datetime.now(timezone.utc).isoformat()
             cur.execute(
-                "INSERT INTO leads (session_id, nombre, empresa, cargo, whatsapp, correo, mensaje_original, timestamp) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                "INSERT INTO leads (session_id, nombre, empresa, cargo, whatsapp, correo, mensaje_original, timestamp, ip) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
                 (session_id, data.get("nombre"), data.get("empresa"), data.get("cargo"),
-                 data.get("whatsapp"), data.get("correo"), text[:500], now)
+                 data.get("whatsapp"), data.get("correo"), text[:500], now, ip)
             )
         cur.close()
     except Exception:
@@ -223,3 +232,33 @@ async def get_lead_count():
         return count
     except Exception:
         return 0
+
+
+async def get_lead_by_session(session_id: str) -> dict | None:
+    """Obtener lead por session_id."""
+    if not DATABASE_URL:
+        return None
+    try:
+        conn = await _get_conn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM leads WHERE session_id = %s", (session_id,))
+        row = cur.fetchone()
+        cur.close()
+        return dict(row) if row else None
+    except Exception:
+        return None
+
+
+async def get_leads_by_ip(ip: str) -> list[dict]:
+    """Obtener todos los leads de una IP."""
+    if not DATABASE_URL or not ip:
+        return []
+    try:
+        conn = await _get_conn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("SELECT * FROM leads WHERE ip = %s ORDER BY timestamp DESC", (ip,))
+        rows = cur.fetchall()
+        cur.close()
+        return [dict(row) for row in rows]
+    except Exception:
+        return []
