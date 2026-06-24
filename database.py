@@ -376,3 +376,59 @@ async def get_visitor_sessions(limit=50):
         return [dict(row) for row in await cursor.fetchall()]
     finally:
         await db.close()
+
+
+async def get_page_views_by_session(session_id: str) -> list[dict]:
+    """Todas las page_views de una sesión."""
+    db = await _get_sqlite()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM page_views WHERE session_id = ? ORDER BY timestamp ASC",
+            (session_id,)
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_events_by_session(session_id: str) -> list[dict]:
+    """Todos los analytics_events de una sesión."""
+    db = await _get_sqlite()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM analytics_events WHERE session_id = ? ORDER BY timestamp ASC",
+            (session_id,)
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_sessions_by_ip(ip: str) -> list[dict]:
+    """Todas las sessions de una IP."""
+    if not ip:
+        return []
+    db = await _get_sqlite()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM analytics_sessions WHERE ip = ? ORDER BY last_seen DESC",
+            (ip,)
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_page_views_by_ip(ip: str) -> list[dict]:
+    """Todas las page_views de una IP."""
+    if not ip:
+        return []
+    db = await _get_sqlite()
+    try:
+        cursor = await db.execute(
+            "SELECT * FROM page_views WHERE ip = ? ORDER BY timestamp DESC",
+            (ip,)
+        )
+        return [dict(row) for row in await cursor.fetchall()]
+    finally:
+        await db.close()

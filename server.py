@@ -162,10 +162,10 @@ def _cleanup_sessions():
             del sessions[sid]
 
 
-async def _try_capture_lead(session_id: str, message: str):
+async def _try_capture_lead(session_id: str, message: str, client_ip: str = ""):
     """Attempt to extract and save lead data from a user message."""
     try:
-        lead = await leads.save_lead(session_id, message)
+        lead = await leads.save_lead(session_id, message, ip=client_ip)
         if lead:
             await leads.notify_amelia(lead, session_id, message)
     except Exception:
@@ -223,6 +223,10 @@ class AnalyticsPageView(BaseModel):
     session_id: str
     url: str
     referrer: Optional[str] = None
+    source: Optional[str] = None
+    utm_source: Optional[str] = None
+    utm_medium: Optional[str] = None
+    utm_campaign: Optional[str] = None
 
 
 class AnalyticsEvent(BaseModel):
@@ -287,7 +291,7 @@ async def chat(req: ChatRequest, request: Request):
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
 
     # Lead capture: try to extract contact data from user's message
-    asyncio.ensure_future(_try_capture_lead(sid, req.message.strip()))
+    asyncio.ensure_future(_try_capture_lead(sid, req.message.strip(), client_ip))
 
     # Lead capture — elegant hook for contact data (MEJORADO 2026-06-17)
     # En vez de inyectar un system message que confunde al modelo,
@@ -368,7 +372,11 @@ async def track_pageview(req: AnalyticsPageView, request: Request):
     referrer = req.referrer or request.headers.get("Referer", "")
     country = request.headers.get("CF-IPCountry") or request.headers.get("X-Vercel-IP-Country") or "unknown"
     client_ip = _get_client_ip(request)
-    await database.log_page_view(req.session_id, req.url, referrer, ua, country, ip=client_ip)
+    # Determinar la fuente de tráfico
+    source = req.utm_source or req.source or ""
+    if not source and referrer:
+        source = referrer  # fallback: dominio de referencia
+    await database.log_page_view(req.session_id, req.url, referrer, ua, country, source=source, ip=client_ip)
     return {"status": "ok"}
 
 
@@ -407,6 +415,68 @@ async def get_leads(limit: int = 50):
     rows = await leads.get_all_leads(limit)
     count = await leads.get_lead_count()
     return {"total": count, "leads": rows}
+
+
+# ─── Journey endpoint — reconstruye el camino completo de una sesión ──────
+
+@app.get("/api/analytics/journey/{session_id}")
+async def get_session_journey(session_id: str):
+    """Reconstruye el journey completo de una sesión: pageviews, eventos, lead, sesiones hermanas (misma IP)."""
+    pageviews = await database.get_page_views_by_session(session_id)
+    events = await database.get_events_by_session(session_id)
+    lead_data = await leads.get_lead_by_session(session_id)
+
+    # Buscar sesiones hermanas (misma IP)
+    ip = ""
+    if pageviews:
+        ip = pageviews[0].get("ip", "")
+    elif lead_data:
+        ip = lead_data.get("ip", "")
+
+    sibling_sessions = await database.get_sessions_by_ip(ip) if ip else []
+
+    # Construir timeline unificado
+    timeline = []
+    for pv in pageviews:
+        timeline.append({"type": "pageview", "timestamp": pv.get("timestamp", ""), "url": pv.get("url", ""),
+                         "device": pv.get("device_type", ""), "browser": pv.get("browser", ""),
+                         "country": pv.get("country", ""), "source": pv.get("source", "")})
+    for ev in events:
+        timeline.append({"type": "event", "timestamp": ev.get("timestamp", ""), "event": ev.get("event_type", ""),
+                         "element": ev.get("element", ""), "url": ev.get("url", "")})
+
+    timeline.sort(key=lambda x: x.get("timestamp", ""))
+
+    return {
+        "session_id": session_id,
+        "ip": ip,
+        "total_pageviews": len(pageviews),
+        "total_events": len(events),
+        "lead": lead_data,
+        "timeline": timeline,
+        "sibling_sessions": [{"session_id": s.get("session_id", ""), "first_seen": s.get("first_seen", ""),
+                              "last_seen": s.get("last_seen", ""), "page_views": s.get("page_views", 0),
+                              "events": s.get("events", 0), "country": s.get("country", ""),
+                              "device": s.get("device_type", ""), "browser": s.get("browser", "")}
+                             for s in sibling_sessions if s.get("session_id") != session_id],
+    }
+
+
+@app.get("/api/analytics/ip/{ip}")
+async def get_ip_history(ip: str):
+    """Historial completo de una IP: sesiones, pageviews y leads capturados."""
+    sessions = await database.get_sessions_by_ip(ip)
+    pageviews = await database.get_page_views_by_ip(ip)
+    leads_list = await leads.get_leads_by_ip(ip)
+
+    return {
+        "ip": ip,
+        "total_sessions": len(sessions),
+        "total_pageviews": len(pageviews),
+        "leads_capturados": len(leads_list),
+        "sessions": [dict(s) for s in sessions],
+        "leads": leads_list,
+    }
 
 
 # ─── Agente de Presentaciones — RAG sobre conocimiento interno ──────────
