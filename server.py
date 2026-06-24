@@ -367,13 +367,15 @@ async def track_pageview(req: AnalyticsPageView, request: Request):
     ua = request.headers.get("User-Agent", "")
     referrer = req.referrer or request.headers.get("Referer", "")
     country = request.headers.get("CF-IPCountry") or request.headers.get("X-Vercel-IP-Country") or "unknown"
-    await database.log_page_view(req.session_id, req.url, referrer, ua, country)
+    client_ip = _get_client_ip(request)
+    await database.log_page_view(req.session_id, req.url, referrer, ua, country, ip=client_ip)
     return {"status": "ok"}
 
 
 @app.post("/api/analytics/event")
-async def track_event(req: AnalyticsEvent):
-    await database.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata)
+async def track_event(req: AnalyticsEvent, request: Request):
+    client_ip = _get_client_ip(request)
+    await database.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata, ip=client_ip)
     return {"status": "ok"}
 
 
