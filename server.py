@@ -447,11 +447,15 @@ async def get_session_journey(session_id: str):
 
     timeline.sort(key=lambda x: x.get("timestamp", ""))
 
+    # ¿Hubo conversión?
+    converted = any(ev.get("event_type") == "demo_click" for ev in events)
+
     return {
         "session_id": session_id,
         "ip": ip,
         "total_pageviews": len(pageviews),
         "total_events": len(events),
+        "converted": converted,
         "lead": lead_data,
         "timeline": timeline,
         "sibling_sessions": [{"session_id": s.get("session_id", ""), "first_seen": s.get("first_seen", ""),
@@ -477,6 +481,55 @@ async def get_ip_history(ip: str):
         "sessions": [dict(s) for s in sessions],
         "leads": leads_list,
     }
+
+
+@app.get("/api/analytics/conversions")
+async def get_conversions(dias: int = 7):
+    """Lista sesiones que hicieron demo_click (agendaron reunión)."""
+    from datetime import datetime as dt, timedelta
+    db = await database._get_sqlite()
+    try:
+        since = (dt.utcnow() - timedelta(days=dias)).isoformat()
+        cursor = await db.execute(
+            """SELECT session_id, timestamp, element, url 
+               FROM analytics_events 
+               WHERE event_type = 'demo_click' AND timestamp >= ? 
+               ORDER BY timestamp DESC""",
+            (since,)
+        )
+        conversions = [dict(row) for row in await cursor.fetchall()]
+
+        # Enriquecer con IP y resumen de cada sesión
+        enriched = []
+        for c in conversions:
+            sid = c["session_id"]
+            # IP de los pageviews de esa sesión
+            cursor2 = await db.execute(
+                "SELECT ip, country FROM page_views WHERE session_id = ? LIMIT 1", (sid,)
+            )
+            pv = await cursor2.fetchone()
+            ip = dict(pv)["ip"] if pv else ""
+            country = dict(pv)["country"] if pv else ""
+
+            # Contar pageviews
+            cursor3 = await db.execute(
+                "SELECT COUNT(*) as c FROM page_views WHERE session_id = ?", (sid,)
+            )
+            pv_count = dict(await cursor3.fetchone())["c"]
+
+            enriched.append({
+                "session_id": sid,
+                "timestamp": c["timestamp"],
+                "url_desde": c["url"] or "",
+                "elemento": c["element"] or "",
+                "ip": ip,
+                "country": country,
+                "pageviews_en_sesion": pv_count,
+            })
+
+        return {"total": len(enriched), "dias": dias, "conversions": enriched}
+    finally:
+        await db.close()
 
 
 # ─── Agente de Presentaciones — RAG sobre conocimiento interno ──────────
