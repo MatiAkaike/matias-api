@@ -102,6 +102,55 @@ async def _init_sqlite():
                 message_count INTEGER DEFAULT 0
             )
         """)
+        # ── Analytics tables ──────────────────────────────────────────
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS page_views (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                url TEXT NOT NULL,
+                referrer TEXT,
+                timestamp TEXT NOT NULL,
+                device_type TEXT DEFAULT 'unknown',
+                browser TEXT DEFAULT 'unknown',
+                os TEXT DEFAULT 'unknown',
+                country TEXT DEFAULT 'unknown',
+                source TEXT DEFAULT 'web',
+                ip TEXT DEFAULT ''
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS analytics_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                element TEXT,
+                url TEXT,
+                timestamp TEXT NOT NULL,
+                metadata TEXT,
+                ip TEXT DEFAULT ''
+            )
+        """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS analytics_sessions (
+                session_id TEXT PRIMARY KEY,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                page_views INTEGER DEFAULT 0,
+                events INTEGER DEFAULT 0,
+                device_type TEXT DEFAULT 'unknown',
+                browser TEXT DEFAULT 'unknown',
+                os TEXT DEFAULT 'unknown',
+                country TEXT DEFAULT 'unknown',
+                ip TEXT DEFAULT ''
+            )
+        """)
+        # Migración: agregar columna ip si no existe (tablas ya creadas)
+        for table in ('page_views', 'analytics_events', 'analytics_sessions'):
+            try:
+                await db.execute(f"ALTER TABLE {table} ADD COLUMN ip TEXT DEFAULT ''")
+            except Exception:
+                pass  # columna ya existe
+        # ────────────────────────────────────────────────────────────────
         await db.execute("CREATE INDEX IF NOT EXISTS idx_interactions_session ON chat_interactions(session_id)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_interactions_timestamp ON chat_interactions(timestamp)")
         await db.commit()
@@ -256,21 +305,21 @@ def _detect_device(ua: str) -> tuple:
     return device, browser, os_name
 
 
-async def log_page_view(session_id, url, referrer, user_agent, country, source="web"):
+async def log_page_view(session_id, url, referrer, user_agent, country, source="web", ip=""):
     try:
         device, browser, os_name = _detect_device(user_agent)
         db = await _get_sqlite()
         try:
             now = datetime.now(timezone.utc).isoformat()
             await db.execute(
-                "INSERT INTO page_views (session_id, url, referrer, timestamp, device_type, browser, os, country, source) VALUES (?,?,?,?,?,?,?,?,?)",
-                (session_id, url, referrer, now, device, browser, os_name, country, source)
+                "INSERT INTO page_views (session_id, url, referrer, timestamp, device_type, browser, os, country, source, ip) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (session_id, url, referrer, now, device, browser, os_name, country, source, ip)
             )
             await db.execute("""
-                INSERT INTO analytics_sessions (session_id, first_seen, last_seen, page_views, events, device_type, browser, os, country)
-                VALUES (?,?,?,1,0,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET
-                last_seen=excluded.last_seen, page_views=page_views+1, device_type=excluded.device_type, browser=excluded.browser, os=excluded.os, country=excluded.country
-            """, (session_id, now, now, device, browser, os_name, country))
+                INSERT INTO analytics_sessions (session_id, first_seen, last_seen, page_views, events, device_type, browser, os, country, ip)
+                VALUES (?,?,?,1,0,?,?,?,?,?) ON CONFLICT(session_id) DO UPDATE SET
+                last_seen=excluded.last_seen, page_views=page_views+1, device_type=excluded.device_type, browser=excluded.browser, os=excluded.os, country=excluded.country, ip=excluded.ip
+            """, (session_id, now, now, device, browser, os_name, country, ip))
             await db.commit()
         finally:
             await db.close()
@@ -278,14 +327,14 @@ async def log_page_view(session_id, url, referrer, user_agent, country, source="
         pass
 
 
-async def log_event(session_id, event_type, element, url, metadata=None):
+async def log_event(session_id, event_type, element, url, metadata=None, ip=""):
     try:
         db = await _get_sqlite()
         try:
             now = datetime.now(timezone.utc).isoformat()
             await db.execute(
-                "INSERT INTO analytics_events (session_id, event_type, element, url, timestamp, metadata) VALUES (?,?,?,?,?,?)",
-                (session_id, event_type, element, url, now, metadata)
+                "INSERT INTO analytics_events (session_id, event_type, element, url, timestamp, metadata, ip) VALUES (?,?,?,?,?,?,?)",
+                (session_id, event_type, element, url, now, metadata, ip)
             )
             await db.execute("""
                 INSERT INTO analytics_sessions (session_id, first_seen, last_seen, page_views, events, device_type, browser, os, country)
