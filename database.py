@@ -398,97 +398,58 @@ async def log_presentation_event(session_id: str, event_type: str, slide: int = 
             pass
 
 
+def empty_presentation_stats():
+    return {"period_days": 7, "total_questions": 0, "unique_sessions": 0, "avg_questions_per_session": 0, "active_sessions_today": 0, "questions_today": 0, "questions_by_slide": [], "duration_by_slide": [], "recent_questions": []}
+
+
 async def get_presentation_stats(days: int = 7):
     """Estadísticas de la presentación para Amelia. PostgreSQL."""
-    pool = await _get_pg_pool()
-    if not pool:
-        return {"error": "No PostgreSQL connection"}
-    
-    async with pool.acquire() as conn:
-        # Total preguntas
-        q_row = await conn.fetchrow(
-            """SELECT COUNT(*) as c FROM presentation_events
-               WHERE event_type='question' AND timestamp > NOW() - $1::interval""",
-            f"{days} days"
-        )
-        total_questions = q_row["c"]
+    try:
+        pool = await _get_pg_pool()
+        if not pool:
+            return empty_presentation_stats()
         
-        # Sesiones únicas
-        s_row = await conn.fetchrow(
-            """SELECT COUNT(DISTINCT session_id) as c FROM presentation_events
-               WHERE timestamp > NOW() - $1::interval""",
-            f"{days} days"
-        )
-        unique_sessions = s_row["c"]
-        
-        # Preguntas por slide
-        qs_rows = await conn.fetch(
-            """SELECT slide, COUNT(*) as c, 
-                      COUNT(DISTINCT session_id) as sessions
-               FROM presentation_events
-               WHERE event_type='question' AND timestamp > NOW() - $1::interval AND slide IS NOT NULL
-               GROUP BY slide ORDER BY c DESC""",
-            f"{days} days"
-        )
-        questions_by_slide = [{"slide": r["slide"], "count": r["c"], "sessions": r["sessions"]} for r in qs_rows]
-        
-        # Promedio de preguntas por sesión
-        avg_q = round(total_questions / unique_sessions, 1) if unique_sessions > 0 else 0
-        
-        # Tiempo promedio por slide (slide_duration events)
-        dur_rows = await conn.fetch(
-            """SELECT slide, 
-                      COUNT(*) as views,
-                      ROUND(AVG((data->>'seconds')::numeric), 0) as avg_seconds
-               FROM presentation_events
-               WHERE event_type='slide_duration' AND timestamp > NOW() - $1::interval AND slide IS NOT NULL
-               GROUP BY slide ORDER BY avg_seconds DESC""",
-            f"{days} days"
-        )
-        duration_by_slide = [{"slide": r["slide"], "views": r["views"], "avg_seconds": int(r["avg_seconds"])} for r in dur_rows]
-        
-        # Últimas preguntas
-        last_rows = await conn.fetch(
-            """SELECT session_id, slide, data->>'question' as question, 
-                      data->>'reply' as reply, timestamp
-               FROM presentation_events
-               WHERE event_type='question' AND timestamp > NOW() - $1::interval
-               ORDER BY timestamp DESC LIMIT 10""",
-            f"{days} days"
-        )
-        recent_questions = [
-            {"session_id": r["session_id"], "slide": r["slide"],
-             "question": r["question"][:200] if r["question"] else "",
-             "reply": r["reply"][:200] if r["reply"] else "",
-             "timestamp": r["timestamp"].isoformat()}
-            for r in last_rows
-        ]
-        
-        # Sesiones que hicieron preguntas hoy
-        today_rows = await conn.fetch(
-            """SELECT COUNT(DISTINCT session_id) as c FROM presentation_events
-               WHERE event_type='question' AND timestamp > CURRENT_DATE""",
-        )
-        questions_today = today_rows[0]["c"]
-        
-        # Sesiones con interaccion hoy (cualquier evento)
-        active_rows = await conn.fetch(
-            """SELECT COUNT(DISTINCT session_id) as c FROM presentation_events
-               WHERE timestamp > CURRENT_DATE""",
-        )
-        active_today = active_rows[0]["c"]
-        
-        return {
-            "period_days": days,
-            "total_questions": total_questions,
-            "unique_sessions": unique_sessions,
-            "avg_questions_per_session": avg_q,
-            "active_sessions_today": active_today,
-            "questions_today": questions_today,
-            "questions_by_slide": questions_by_slide,
-            "duration_by_slide": duration_by_slide,
-            "recent_questions": recent_questions,
-        }
+        async with pool.acquire() as conn:
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='presentation_events')"
+            )
+            if not exists:
+                return empty_presentation_stats()
+
+            q_row = await conn.fetchrow(
+                "SELECT COUNT(*) as c FROM presentation_events WHERE event_type='question' AND timestamp > NOW() - make_interval(days => $1)", days
+            )
+            total_questions = q_row["c"]
+            s_row = await conn.fetchrow(
+                "SELECT COUNT(DISTINCT session_id) as c FROM presentation_events WHERE timestamp > NOW() - make_interval(days => $1)", days
+            )
+            unique_sessions = s_row["c"]
+            qs_rows = await conn.fetch(
+                "SELECT slide, COUNT(*) as c, COUNT(DISTINCT session_id) as sessions FROM presentation_events WHERE event_type='question' AND timestamp > NOW() - make_interval(days => $1) AND slide IS NOT NULL GROUP BY slide ORDER BY c DESC", days
+            )
+            questions_by_slide = [{"slide": r["slide"], "count": r["c"], "sessions": r["sessions"]} for r in qs_rows]
+            avg_q = round(total_questions / unique_sessions, 1) if unique_sessions > 0 else 0
+            dur_rows = await conn.fetch(
+                "SELECT slide, COUNT(*) as views, ROUND(AVG((data->>'seconds')::numeric), 0) as avg_seconds FROM presentation_events WHERE event_type='slide_duration' AND timestamp > NOW() - make_interval(days => $1) AND slide IS NOT NULL GROUP BY slide ORDER BY avg_seconds DESC", days
+            )
+            duration_by_slide = [{"slide": r["slide"], "views": r["views"], "avg_seconds": int(r["avg_seconds"] or 0)} for r in dur_rows]
+            last_rows = await conn.fetch(
+                "SELECT session_id, slide, data->>'question' as question, data->>'reply' as reply, timestamp FROM presentation_events WHERE event_type='question' AND timestamp > NOW() - make_interval(days => $1) ORDER BY timestamp DESC LIMIT 10", days
+            )
+            recent_questions = [
+                {"session_id": r["session_id"], "slide": r["slide"], "question": (r["question"] or "")[:200], "reply": (r["reply"] or "")[:200], "timestamp": r["timestamp"].isoformat()}
+                for r in last_rows
+            ]
+            today_q = await conn.fetchval("SELECT COUNT(DISTINCT session_id) FROM presentation_events WHERE event_type='question' AND timestamp > CURRENT_DATE")
+            today_active = await conn.fetchval("SELECT COUNT(DISTINCT session_id) FROM presentation_events WHERE timestamp > CURRENT_DATE")
+            return {
+                "period_days": days, "total_questions": total_questions, "unique_sessions": unique_sessions,
+                "avg_questions_per_session": avg_q, "active_sessions_today": today_active or 0,
+                "questions_today": today_q or 0, "questions_by_slide": questions_by_slide,
+                "duration_by_slide": duration_by_slide, "recent_questions": recent_questions,
+            }
+    except Exception:
+        return empty_presentation_stats()
 
 
 async def get_recent_pageviews(limit=50):
