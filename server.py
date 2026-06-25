@@ -728,6 +728,137 @@ async def presentacion_stats(days: int = 7):
     return await database.get_presentation_stats(days=days)
 
 
+# ─── Evaluación de calidad ────────────────────────────────────────────────
+
+@app.get("/api/presentacion/evaluate")
+async def presentacion_evaluate(days: int = 1):
+    """Evalua la calidad de las respuestas del agente de presentacion.
+    Compara cada respuesta contra el knowledge base y asigna puntaje 1-5.
+    """
+    import knowledge_base
+    
+    stats = await database.get_presentation_stats(days=days)
+    questions = stats.get("recent_questions", [])
+    
+    if not questions:
+        return {"evaluated": 0, "message": "No hay preguntas para evaluar"}
+    
+    api_key = os.getenv("DEEPSEEK_API_KEY", "")
+    if not api_key:
+        return {"error": "DEEPSEEK_API_KEY no configurada"}
+    
+    evaluations = []
+    scores = []
+    
+    async with httpx.AsyncClient(timeout=120) as client:
+        for q in questions:
+            question_text = q.get("question", "")
+            actual_reply = q.get("reply", "")
+            slide_num = q.get("slide", -1)
+            
+            # Buscar en el KB la respuesta ideal
+            kb_context = knowledge_base.search_relevant(question_text, slide_num, max_chars=6000)
+            
+            if not kb_context:
+                evaluations.append({
+                    "question": question_text[:120],
+                    "slide": slide_num,
+                    "score": None,
+                    "issue": "Sin contexto en KB para evaluar",
+                })
+                continue
+            
+            # Pedir a DeepSeek que evalue
+            eval_prompt = (
+                "Eres un auditor de calidad de Akaike Credit Risk Solutions. Evalua esta respuesta del bot de presentaciones.\n\n"
+                f"PREGUNTA DEL USUARIO: {question_text}\n\n"
+                f"RESPUESTA DEL BOT: {actual_reply}\n\n"
+                f"CONTEXTO DE LA PRESENTACION (fuente de verdad):\n{kb_context}\n\n"
+                "EVALUA (responde SOLO en este formato JSON, sin markdown):\n"
+                '{"score": 4, "accuracy": "alta|media|baja", "issues": ["problema 1", "problema 2"], '
+                '"suggestion": "mejora concreta y accionable", "missing": "lo que falto decir"}'
+                "\n\n"
+                "CRITERIOS de scoring (1-5):\n"
+                "5 = Respuesta perfecta, precisa, basada en datos reales de Akaike, concisa, sin alucinaciones\n"
+                "4 = Correcta pero le falto profundidad o contexto relevante del KB\n"
+                "3 = Parcialmente correcta, omite informacion importante del KB\n"
+                "2 = Tiene errores factuales o alucina datos que no estan en el KB\n"
+                "1 = Completamente equivocada, inventa, o contradice el KB\n\n"
+                "SOLO responde el JSON. Nada mas."
+            )
+            
+            try:
+                r = await client.post(
+                    "https://api.deepseek.com/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json={
+                        "model": "deepseek-chat",
+                        "messages": [{"role": "user", "content": eval_prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 300,
+                    },
+                )
+                data = r.json()
+                raw = data["choices"][0]["message"]["content"].strip()
+                # Limpiar markdown
+                raw = raw.replace("```json", "").replace("```", "").strip()
+                
+                import json as _json
+                try:
+                    ev = _json.loads(raw)
+                except Exception:
+                    # Intentar extraer JSON
+                    match = re.search(r'\{.*\}', raw, re.DOTALL)
+                    ev = _json.loads(match.group()) if match else {"score": None, "error": raw[:100]}
+                
+                score = ev.get("score")
+                if score:
+                    scores.append(score)
+                
+                evaluations.append({
+                    "question": question_text[:150],
+                    "slide": slide_num,
+                    "score": score,
+                    "accuracy": ev.get("accuracy", ""),
+                    "issues": ev.get("issues", []),
+                    "suggestion": ev.get("suggestion", ""),
+                    "missing": ev.get("missing", ""),
+                })
+            except Exception as e:
+                evaluations.append({
+                    "question": question_text[:120],
+                    "slide": slide_num,
+                    "score": None,
+                    "error": str(e)[:100],
+                })
+    
+    avg_score = round(sum(scores) / len(scores), 1) if scores else None
+    low_scores = [e for e in evaluations if e.get("score") and e["score"] <= 3]
+    
+    return {
+        "evaluated": len(evaluations),
+        "average_score": avg_score,
+        "score_distribution": {
+            "5": len([s for s in scores if s == 5]),
+            "4": len([s for s in scores if s == 4]),
+            "3": len([s for s in scores if s == 3]),
+            "2": len([s for s in scores if s == 2]),
+            "1": len([s for s in scores if s == 1]),
+        },
+        "needs_improvement": len(low_scores),
+        "improvements": [
+            {
+                "question": e["question"],
+                "score": e["score"],
+                "issue": e.get("issues", [None])[0] if e.get("issues") else "",
+                "suggestion": e.get("suggestion", ""),
+            }
+            for e in low_scores[:5]
+        ],
+        "all_evaluations": evaluations,
+    }
+
+
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
