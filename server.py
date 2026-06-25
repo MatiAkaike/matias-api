@@ -725,7 +725,14 @@ async def presentacion_event_preflight():
 
 @app.get("/api/presentacion/stats")
 async def presentacion_stats(days: int = 7):
-    return await database.get_presentation_stats(days=days)
+    try:
+        return await database.get_presentation_stats(days=days)
+    except Exception as e:
+        return {"period_days": days, "total_questions": 0, "unique_sessions": 0,
+                "avg_questions_per_session": 0, "active_sessions_today": 0,
+                "questions_today": 0, "questions_by_slide": [],
+                "duration_by_slide": [], "recent_questions": [],
+                "note": f"DB no disponible. Se registraran datos cuando la presentacion se use. ({str(e)[:100]})"}
 
 
 # ─── Evaluación de calidad ────────────────────────────────────────────────
