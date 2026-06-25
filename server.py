@@ -578,9 +578,13 @@ async def presentacion_preflight():
 
 
 @app.post("/api/presentacion")
-async def presentacion_chat(req: PresentacionRequest, response: Response):
+async def presentacion_chat(req: PresentacionRequest, response: Response, request: Request):
     response.headers["Access-Control-Allow-Origin"] = "*"
     import knowledge_base
+
+    # Extraer IP
+    client_ip = _get_client_ip(request)
+    client_ua = request.headers.get("User-Agent", "")
 
     # Texto de cada diapositiva
     slides = {
@@ -659,7 +663,69 @@ async def presentacion_chat(req: PresentacionRequest, response: Response):
     except Exception:
         reply = "No pude procesar tu consulta en este momento. Contactá a Oscar Gutiérrez:\n📧 oscar@akaike.co | 📱 +57 313 412 4795\n📅 https://calendar.app.google/YhY1KSgjktrRrcBb6"
 
+    # Registrar pregunta en BD
+    await database.log_presentation_event(
+        session_id=req.session_id,
+        event_type="question",
+        slide=req.slide if req.slide >= 0 else None,
+        data={"question": req.message, "reply": reply},
+        ip=client_ip,
+        user_agent=client_ua,
+    )
+
     return PresentacionResponse(reply=reply, session_id=req.session_id)
+
+
+# ─── Eventos de presentación ──────────────────────────────────────────────
+
+class PresentacionEvent(PydanticBase):
+    session_id: str
+    event_type: str  # 'slide_view' o 'slide_duration'
+    slide: Optional[int] = None
+    seconds: Optional[float] = None  # para slide_duration
+    name: str = "Invitado"
+
+@app.post("/api/presentacion/event")
+async def presentacion_event(req: PresentacionEvent, request: Request):
+    response = Response()
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    
+    ip = _get_client_ip(request)
+    ua = request.headers.get("User-Agent", "")
+    data = {}
+    if req.seconds is not None:
+        data["seconds"] = req.seconds
+    if req.name:
+        data["name"] = req.name
+    
+    await database.log_presentation_event(
+        session_id=req.session_id,
+        event_type=req.event_type,
+        slide=req.slide,
+        data=data,
+        ip=ip,
+        user_agent=ua,
+    )
+    return {"ok": True}
+
+@app.options("/api/presentacion/event")
+async def presentacion_event_preflight():
+    return Response(
+        status_code=200,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type",
+            "Access-Control-Max-Age": "600",
+        }
+    )
+
+
+# ─── Stats de presentación ────────────────────────────────────────────────
+
+@app.get("/api/presentacion/stats")
+async def presentacion_stats(days: int = 7):
+    return await database.get_presentation_stats(days=days)
 
 
 # ─── Entrypoint ──────────────────────────────────────────────────────────────

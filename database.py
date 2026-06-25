@@ -69,6 +69,24 @@ async def _init_pg():
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pg_interactions_session ON chat_interactions(session_id)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_pg_interactions_timestamp ON chat_interactions(timestamp)")
 
+        # Tabla de eventos de presentación
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS presentation_events (
+                id SERIAL PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL CHECK(event_type IN ('question', 'slide_view', 'slide_duration')),
+                slide INTEGER,
+                data JSONB DEFAULT '{}',
+                ip TEXT,
+                user_agent TEXT,
+                timestamp TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pe_session ON presentation_events(session_id)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pe_type ON presentation_events(event_type)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pe_timestamp ON presentation_events(timestamp)")
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_pe_slide ON presentation_events(slide)")
+
 
 # ── SQLite fallback (local dev) ──────────────────────────────────────
 
@@ -358,6 +376,119 @@ async def get_analytics_dashboard():
         return {"total_pageviews": total_pageviews, "total_visitors": total_visitors}
     finally:
         await db.close()
+
+
+# ── Presentation events ───────────────────────────────────────────────
+
+async def log_presentation_event(session_id: str, event_type: str, slide: int = None,
+                                  data: dict = None, ip: str = None, user_agent: str = None):
+    """Registra un evento de la presentación en PostgreSQL."""
+    pool = await _get_pg_pool()
+    if pool:
+        try:
+            import json as _json
+            async with pool.acquire() as conn:
+                await conn.execute(
+                    """INSERT INTO presentation_events (session_id, event_type, slide, data, ip, user_agent)
+                       VALUES ($1, $2, $3, $4, $5, $6)""",
+                    session_id, event_type, slide,
+                    _json.dumps(data or {}), ip, user_agent
+                )
+        except Exception:
+            pass
+
+
+async def get_presentation_stats(days: int = 7):
+    """Estadísticas de la presentación para Amelia. PostgreSQL."""
+    pool = await _get_pg_pool()
+    if not pool:
+        return {"error": "No PostgreSQL connection"}
+    
+    async with pool.acquire() as conn:
+        # Total preguntas
+        q_row = await conn.fetchrow(
+            """SELECT COUNT(*) as c FROM presentation_events
+               WHERE event_type='question' AND timestamp > NOW() - $1::interval""",
+            f"{days} days"
+        )
+        total_questions = q_row["c"]
+        
+        # Sesiones únicas
+        s_row = await conn.fetchrow(
+            """SELECT COUNT(DISTINCT session_id) as c FROM presentation_events
+               WHERE timestamp > NOW() - $1::interval""",
+            f"{days} days"
+        )
+        unique_sessions = s_row["c"]
+        
+        # Preguntas por slide
+        qs_rows = await conn.fetch(
+            """SELECT slide, COUNT(*) as c, 
+                      COUNT(DISTINCT session_id) as sessions
+               FROM presentation_events
+               WHERE event_type='question' AND timestamp > NOW() - $1::interval AND slide IS NOT NULL
+               GROUP BY slide ORDER BY c DESC""",
+            f"{days} days"
+        )
+        questions_by_slide = [{"slide": r["slide"], "count": r["c"], "sessions": r["sessions"]} for r in qs_rows]
+        
+        # Promedio de preguntas por sesión
+        avg_q = round(total_questions / unique_sessions, 1) if unique_sessions > 0 else 0
+        
+        # Tiempo promedio por slide (slide_duration events)
+        dur_rows = await conn.fetch(
+            """SELECT slide, 
+                      COUNT(*) as views,
+                      ROUND(AVG((data->>'seconds')::numeric), 0) as avg_seconds
+               FROM presentation_events
+               WHERE event_type='slide_duration' AND timestamp > NOW() - $1::interval AND slide IS NOT NULL
+               GROUP BY slide ORDER BY avg_seconds DESC""",
+            f"{days} days"
+        )
+        duration_by_slide = [{"slide": r["slide"], "views": r["views"], "avg_seconds": int(r["avg_seconds"])} for r in dur_rows]
+        
+        # Últimas preguntas
+        last_rows = await conn.fetch(
+            """SELECT session_id, slide, data->>'question' as question, 
+                      data->>'reply' as reply, timestamp
+               FROM presentation_events
+               WHERE event_type='question' AND timestamp > NOW() - $1::interval
+               ORDER BY timestamp DESC LIMIT 10""",
+            f"{days} days"
+        )
+        recent_questions = [
+            {"session_id": r["session_id"], "slide": r["slide"],
+             "question": r["question"][:200] if r["question"] else "",
+             "reply": r["reply"][:200] if r["reply"] else "",
+             "timestamp": r["timestamp"].isoformat()}
+            for r in last_rows
+        ]
+        
+        # Sesiones que hicieron preguntas hoy
+        today_rows = await conn.fetch(
+            """SELECT COUNT(DISTINCT session_id) as c FROM presentation_events
+               WHERE event_type='question' AND timestamp > CURRENT_DATE""",
+        )
+        questions_today = today_rows[0]["c"]
+        
+        # Sesiones con interaccion hoy (cualquier evento)
+        active_rows = await conn.fetch(
+            """SELECT COUNT(DISTINCT session_id) as c FROM presentation_events
+               WHERE timestamp > CURRENT_DATE""",
+        )
+        active_today = active_rows[0]["c"]
+        
+        return {
+            "period_days": days,
+            "total_questions": total_questions,
+            "unique_sessions": unique_sessions,
+            "avg_questions_per_session": avg_q,
+            "active_sessions_today": active_today,
+            "questions_today": questions_today,
+            "questions_by_slide": questions_by_slide,
+            "duration_by_slide": duration_by_slide,
+            "recent_questions": recent_questions,
+        }
 
 
 async def get_recent_pageviews(limit=50):
