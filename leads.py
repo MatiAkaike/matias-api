@@ -49,9 +49,15 @@ async def _get_conn():
 
 async def init_leads_db():
     if not DATABASE_URL:
+        print("[LEADS] DATABASE_URL vacio — leads deshabilitado")
         return
     try:
         conn = await _get_conn()
+        cur = conn.cursor()
+        cur.execute("SELECT 1")
+        cur.close()
+        print("[LEADS] Conexion DB OK")
+
         cur = conn.cursor()
         cur.execute("""
             CREATE TABLE IF NOT EXISTS leads (
@@ -88,9 +94,10 @@ async def init_leads_db():
             cur.execute("UPDATE leads SET source = 'Web - M.A.T.I.A.S. Bot' WHERE source IS NULL")
         except Exception:
             pass
+        print("[LEADS] init_leads_db completo")
         cur.close()
-    except Exception:
-        pass
+    except Exception as e:
+        print(f"[LEADS] Error en init_leads_db: {e}")
 
 
 def _extract_lead_data(text: str) -> dict:
