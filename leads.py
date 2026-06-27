@@ -151,7 +151,7 @@ def _extract_lead_data(text: str) -> dict:
         role_text = re.sub(r'^(soy el |soy la |soy )', '', role_text, flags=re.IGNORECASE)
         lead["cargo"] = role_text
 
-    if len(lead) >= 2:
+    if "correo" in lead or len(lead) >= 2:
         return lead
     return {}
 
