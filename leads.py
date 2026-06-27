@@ -15,7 +15,19 @@ from email import encoders
 from datetime import datetime, timezone
 from pathlib import Path
 
-DATABASE_URL = os.getenv("DATABASE_URL", "")
+def _build_dsn():
+    """Construye DSN igual que database.py."""
+    host = os.getenv("SUPABASE_HOST", "")
+    pw = os.getenv("SUPABASE_PASSWORD", "")
+    user = os.getenv("SUPABASE_USER", "postgres")
+    port = os.getenv("SUPABASE_PORT", "6543")
+    db = os.getenv("SUPABASE_DB", "postgres")
+    if host and pw:
+        from urllib.parse import quote_plus
+        return f"postgresql://{user}:{quote_plus(pw)}@{host}:{port}/{db}"
+    return os.getenv("DATABASE_URL", "")
+
+DATABASE_URL = _build_dsn()
 TELEGRAM_BOT_TOKEN = os.getenv("AMELIA_TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = os.getenv("AMELIA_TELEGRAM_CHAT_ID", "")
 
