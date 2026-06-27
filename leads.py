@@ -24,7 +24,7 @@ def _build_dsn():
     db = os.getenv("SUPABASE_DB", "postgres")
     if host and pw:
         from urllib.parse import quote_plus
-        return f"postgresql://{user}:{quote_plus(pw)}@{host}:{port}/{db}"
+        return f"postgresql://{user}:***@{host}:{port}/{db}?sslmode=require"
     return os.getenv("DATABASE_URL", "")
 
 DATABASE_URL = _build_dsn()
