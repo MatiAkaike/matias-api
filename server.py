@@ -167,7 +167,11 @@ async def _try_capture_lead(session_id: str, message: str, client_ip: str = ""):
     try:
         lead = await leads.save_lead(session_id, message, ip=client_ip)
         if lead:
+            # Notificar a Amelia por Telegram
             await leads.notify_amelia(lead, session_id, message)
+            # Enviar correo al lead si tiene email
+            if lead.get("correo"):
+                asyncio.create_task(leads.send_lead_email(lead, session_id))
     except Exception:
         pass
 
