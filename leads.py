@@ -5,6 +5,13 @@ import httpx
 import asyncio
 import psycopg2
 import psycopg2.extras
+import smtplib
+import ssl
+import time as _time
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -56,6 +63,19 @@ async def init_leads_db():
             cur.execute("ALTER TABLE leads ADD COLUMN ip TEXT DEFAULT ''")
         except Exception:
             pass  # ya existe
+        # Migración: columnas nuevas para webhook de leads
+        for col, tipo in [("pais", "TEXT"), ("source", "TEXT DEFAULT 'Web - M.A.T.I.A.S. Bot'"),
+                          ("conversacion_json", "JSONB"), ("fecha_actualizacion", "TIMESTAMPTZ"),
+                          ("email_sent", "INTEGER DEFAULT 0"), ("email_error", "TEXT")]:
+            try:
+                cur.execute(f"ALTER TABLE leads ADD COLUMN {col} {tipo}")
+            except Exception:
+                pass
+        # Si source es NULL, actualizar a valor por defecto
+        try:
+            cur.execute("UPDATE leads SET source = 'Web - M.A.T.I.A.S. Bot' WHERE source IS NULL")
+        except Exception:
+            pass
         cur.close()
     except Exception:
         pass
@@ -169,7 +189,7 @@ async def save_lead(session_id: str, text: str, ip: str = "") -> dict | None:
 
 
 async def notify_amelia(lead: dict, session_id: str, user_message: str):
-    """Notify Amelia about a new lead via Telegram."""
+    """Notifica a Amelia sobre un nuevo lead via Telegram."""
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         return
     if TELEGRAM_CHAT_ID == "PLACEHOLDER":
@@ -202,6 +222,160 @@ async def notify_amelia(lead: dict, session_id: str, user_message: str):
                     "parse_mode": "Markdown",
                 },
             )
+    except Exception:
+        pass
+
+
+# ─── Email sending via Zoho SMTP ────────────────────────────────────────────
+
+# Config Zoho SMTP
+ZOHO_SMTP_HOST = os.getenv("ZOHO_SMTP_HOST", "smtp.zoho.com")
+ZOHO_SMTP_PORT = int(os.getenv("ZOHO_SMTP_PORT", "587"))
+ZOHO_EMAIL = os.getenv("ZOHO_EMAIL", "amelia@akaike.lat")
+ZOHO_APP_PASSWORD = os.getenv("ZOHO_APP_PASSWORD", "")
+ZOHO_SENDER_NAME = os.getenv("ZOHO_SENDER_NAME", "Amelia — Akaike CRS")
+
+# URL demo y PDF
+DEMO_URL = "https://calendar.app.google/sb4W9ja1WLUAaaMs9"
+PDF_PATH = os.getenv("LEAD_PDF_PATH", os.path.expanduser(
+    "~/Library/Mobile Documents/com~apple~CloudDocs/Akaike CRS/MATIAS/"
+    "Akaike Presentación de Servicios 2026 - M.A.T.I.A.S.SP.pdf"))
+PDF_GDRIVE_LINK = os.getenv("LEAD_PDF_GDRIVE_LINK",
+    "https://drive.google.com/file/d/1Qq6QVKl2h0FqNbLf-TWjKOfPGP6-MiYP/view?usp=drive_link")
+
+PDF_MAX_SIZE = 7_500_000  # 7.5 MB
+
+
+def _build_lead_email(nombre: str, empresa: str, correo: str) -> str:
+    """Construye el HTML del correo de lead."""
+    saludo = f"Hola {nombre}" if nombre else "Hola"
+    return f"""\
+<html><body style="font-family:Arial,sans-serif;color:#1a2440;max-width:600px;margin:0 auto">
+<h2 style="color:#0ea5e9">{saludo},</h2>
+<p>Gracias por tu interés en <strong>M.A.T.I.A.S.</strong>, la inteligencia artificial de credit scoring de Akaike Credit Risk Solutions.</p>
+<p>M.A.T.I.A.S. ayuda a fintechs, cooperativas y entidades de crédito a:</p>
+<ul>
+  <li>Mejorar hasta un <strong>44% la tasa de aprobación</strong></li>
+  <li>Reducir hasta un <strong>36% el NPL/ICV</strong></li>
+  <li>Automatizar decisiones de originación, seguimiento y cobranza</li>
+  <li>Procesar solicitudes 7x24 con conexión a burós y lectura de documentos</li>
+</ul>
+<p style="margin:24px 0">
+  <a href="{DEMO_URL}" style="background:#0ea5e9;color:#fff;padding:14px 28px;border-radius:8px;text-decoration:none;font-weight:bold;font-size:16px">
+    Agendar demo — 30 minutos
+  </a>
+</p>
+<p style="color:#64748b;font-size:13px">Adjunto encontrarás la presentación de servicios de Akaike.<br>
+Si tenés preguntas, respondé este correo o escribime a amelia@akaike.lat.</p>
+<p style="color:#94a3b8;font-size:12px;margin-top:24px">
+Amelia · Segunda al Mando<br>
+Akaike Credit Risk Solutions · <a href="https://akaike.lat">akaike.lat</a>
+</p>
+</body></html>"""
+
+
+async def send_lead_email(lead: dict, session_id: str) -> dict:
+    """Envía correo de seguimiento al lead con reintentos.
+    Retorna dict con status y error si falla."""
+    if not ZOHO_APP_PASSWORD:
+        return {"sent": False, "error": "ZOHO_APP_PASSWORD no configurado"}
+
+    correo = lead.get("correo", "")
+    if not correo:
+        return {"sent": False, "error": "Sin correo en lead"}
+
+    nombre = lead.get("nombre", "")
+    html = _build_lead_email(nombre, lead.get("empresa", ""), correo)
+    subject = "M.A.T.I.A.S. — Información de Akaike Credit Risk Solutions"
+
+    # Construir mensaje multipart
+    msg = MIMEMultipart("mixed")
+    msg["Subject"] = subject
+    msg["From"] = f"{ZOHO_SENDER_NAME} <{ZOHO_EMAIL}>"
+    msg["To"] = correo
+    msg.attach(MIMEText(html, "html"))
+
+    # Adjuntar PDF o link de Drive
+    pdf_attached = False
+    pdf_path = Path(PDF_PATH)
+    if pdf_path.exists() and pdf_path.stat().st_size < PDF_MAX_SIZE:
+        try:
+            with open(pdf_path, "rb") as f:
+                part = MIMEBase("application", "pdf")
+                part.set_payload(f.read())
+                encoders.encode_base64(part)
+                part.add_header("Content-Disposition",
+                    f'attachment; filename="{pdf_path.name}"')
+                msg.attach(part)
+                pdf_attached = True
+        except Exception:
+            pass
+
+    if not pdf_attached:
+        # Agregar link de Google Drive como alternativa
+        link_note = MIMEText(
+            f'<p style="font-size:12px;color:#94a3b8;margin-top:16px">'
+            f'📎 <a href="{PDF_GDRIVE_LINK}">Descargar presentación de servicios (PDF)</a></p>',
+            "html")
+        msg.attach(link_note)
+
+    # Retry con backoff exponencial
+    last_error = ""
+    for attempt in range(3):
+        try:
+            context = ssl.create_default_context()
+            server = await asyncio.to_thread(smtplib.SMTP, ZOHO_SMTP_HOST, ZOHO_SMTP_PORT, timeout=15)
+            server.starttls(context=context)
+            server.login(ZOHO_EMAIL, ZOHO_APP_PASSWORD)
+            await asyncio.to_thread(server.sendmail, ZOHO_EMAIL, correo, msg.as_string())
+            server.quit()
+
+            # Marcar como enviado
+            await _mark_email_sent(session_id, True)
+            return {"sent": True, "to": correo, "attempts": attempt + 1}
+
+        except Exception as e:
+            last_error = str(e).replace(ZOHO_APP_PASSWORD, "***")
+            if attempt < 2:
+                delay = 2 ** attempt
+                await asyncio.sleep(delay)
+
+    # Fallaron los 3 intentos
+    await _mark_email_sent(session_id, False, last_error)
+    # Notificar fallo a Telegram
+    await _notify_email_failure(lead, session_id, last_error)
+    return {"sent": False, "error": last_error, "attempts": 3}
+
+
+async def _mark_email_sent(session_id: str, success: bool, error: str = ""):
+    """Actualiza el estado de envío de email en la BD."""
+    if not DATABASE_URL:
+        return
+    try:
+        conn = await _get_conn()
+        cur = conn.cursor()
+        cur.execute(
+            "UPDATE leads SET email_sent = %s, email_error = %s, "
+            "fecha_actualizacion = NOW() WHERE session_id = %s",
+            (1 if success else 2, error[:500] if error else "", session_id))
+        cur.close()
+    except Exception:
+        pass
+
+
+async def _notify_email_failure(lead: dict, session_id: str, error: str):
+    """Notifica fallo de envío de email a Telegram."""
+    if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        return
+    correo = lead.get("correo", "?")
+    msg = (f"⚠️ *Fallo envío de correo a lead*\n"
+           f"📧 {correo}\n"
+           f"Error: {error[:300]}")
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage",
+                json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"})
     except Exception:
         pass
 
