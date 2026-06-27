@@ -870,6 +870,20 @@ async def presentacion_evaluate(days: int = 1):
     }
 
 
+# ─── Diagnostico leads ────────────────────────────────────────────────────────
+
+@app.get("/api/leads/debug")
+async def leads_debug():
+    dsn = leads.DATABASE_URL
+    masked = dsn[:20] + "***" + dsn[-15:] if len(dsn) > 40 else ("VACIO" if not dsn else dsn[:10] + "***")
+    return {
+        "database_url_set": bool(dsn),
+        "url_preview": masked,
+        "extract_test1": leads._extract_lead_data("ogutimo82@gmail.com Oscar Akaike"),
+        "extract_test2": leads._extract_lead_data("test@example.com"),
+    }
+
+
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
