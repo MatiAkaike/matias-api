@@ -511,6 +511,28 @@ async def get_sessions_by_ip(ip: str) -> list[dict]:
         await db.close()
 
 
+# ─── Security: Enable RLS ────────────────────────────────────────────────────
+
+async def enable_rls_on_all_tables() -> dict:
+    """Habilita RLS en todas las tablas publicas de Supabase."""
+    pool = await _get_pg_pool()
+    if not pool:
+        return {"error": "No Postgres pool"}
+    results = []
+    async with pool.acquire() as conn:
+        tables = await conn.fetch(
+            "SELECT tablename FROM pg_tables WHERE schemaname='public' AND rowsecurity=false"
+        )
+        for row in tables:
+            t = row["tablename"]
+            try:
+                await conn.execute(f"ALTER TABLE public.\"{t}\" ENABLE ROW LEVEL SECURITY")
+                results.append(f"{t}: RLS ENABLED")
+            except Exception as e:
+                results.append(f"{t}: ERROR {e}")
+    return {"tables_updated": len(tables), "results": results}
+
+
 async def get_page_views_by_ip(ip: str) -> list[dict]:
     """Todas las page_views de una IP."""
     if not ip:
