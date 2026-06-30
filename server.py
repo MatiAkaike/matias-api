@@ -884,6 +884,14 @@ async def leads_debug():
     }
 
 
+# ─── Security: Enable RLS ─────────────────────────────────────────────────────
+
+@app.post("/api/admin/enable-rls")
+async def admin_enable_rls():
+    result = await database.enable_rls_on_all_tables()
+    return result
+
+
 # ─── Entrypoint ──────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
