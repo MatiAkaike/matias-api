@@ -10,7 +10,7 @@ services:
       - key: SUPABASE_HOST
         value: aws-1-us-west-2.pooler.supabase.com
       - key: SUPABASE_PASSWORD
-        value: MatiGuti@2909*
+        sync: false
       - key: SUPABASE_USER
         value: postgres.vnifbfypluszbukaebqq
       - key: SUPABASE_PORT

@@ -90,8 +90,7 @@ rechazadas con 426 Upgrade Required.
 M.A.T.I.A.S. soporta dos esquemas de autenticación, que pueden usarse de forma combinada. 
 4.1 API Key (obligatoria) 
 Cada tenant recibe una API Key única, enviada en el header HTTP: 
-X-Akaike-Api-Key: ak_live_8f3a92d1c47b6e0a5f1b9d2e3c8a7f4b 
- 
+X-Akaike-Api-Key: [API_KEY_DEL_TENANT]
 • 
 Llaves de sandbox: prefijo ak_test_ 
 • 
@@ -175,13 +174,13 @@ Request Body:
 { 
   "grant_type": "client_credentials", 
   "client_id": "akaike_client_xxxxxxxx", 
-  "client_secret": "akaike_secret_xxxxxxxxxxxxxxxx", 
+  "client_secret": "[CLIENT_SECRET]",
   "scope": "evaluations:read evaluations:write" 
 } 
  
 Response 200: 
 { 
-  "access_token": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...", 
+  "access_token": "[ACCESS_TOKEN]",
   "token_type": "Bearer", 
   "expires_in": 900, 
   "scope": "evaluations:read evaluations:write" 
