@@ -37,7 +37,13 @@ async def _get_pg_pool():
     if _pg_pool is None and dsn:
         async with _pg_lock:
             if _pg_pool is None:
-                _pg_pool = await asyncpg.create_pool(dsn, min_size=1, max_size=5, ssl="require")
+                _pg_pool = await asyncpg.create_pool(
+                    dsn,
+                    min_size=1,
+                    max_size=5,
+                    ssl="require",
+                    statement_cache_size=0,
+                )
     return _pg_pool
 
 
@@ -179,10 +185,18 @@ async def _init_sqlite():
 # ── Public init ──────────────────────────────────────────────────────
 
 async def init_db():
-    if DATABASE_URL:
+    if _build_dsn():
         await _init_pg()
     else:
         await _init_sqlite()
+
+
+async def close_db():
+    """Cierra el pool de PostgreSQL durante un apagado ordenado."""
+    global _pg_pool
+    if _pg_pool:
+        await _pg_pool.close()
+        _pg_pool = None
 
 
 # ── Chat operations ──────────────────────────────────────────────────
@@ -224,7 +238,8 @@ async def log_interaction(session_id: str, role: str, content: str, model: str =
         finally:
             await db.close()
     except Exception:
-        pass
+        # El chat no responde si la interacción no quedó persistida.
+        raise
 
 
 async def get_recent_interactions(limit: int = 50):

@@ -1,4 +1,5 @@
 import json
+import hmac
 import os
 import re
 import uuid
@@ -20,11 +21,12 @@ load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
 
 # ─── System prompt ───────────────────────────────────────────────────────────
 
+import analytics_store
 import database
-import leads
+import lead_service as leads
 
 try:
-    from prompt import SYSTEM_PROMPT
+    from agent_prompt import SYSTEM_PROMPT
 except ImportError:
     # Fallback: load from config.json (local dev)
     CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "config.json"
@@ -48,13 +50,19 @@ API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
+MEETING_URL = os.getenv(
+    "GOOGLE_CALENDAR_BOOKING_URL",
+    "https://calendar.app.google/YhY1KSgjktrRrcBb6",
+)
+MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", "4000"))
+ADMIN_TOKEN = os.getenv("MATIAS_ADMIN_TOKEN", "")
 
 # ─── Alerta de abuso por IP ───────────────────────────────────────────────────
 
 ABUSE_THRESHOLD = int(os.getenv("ABUSE_SESSION_THRESHOLD", "20"))  # sesiones por IP
 ABUSE_COOLDOWN = int(os.getenv("ABUSE_ALERT_COOLDOWN", "3600"))    # segundos entre alertas por IP
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8957187826:AAGzDUwn6iW_olqpJVz2KNpWGybaoF3R8ro")
-OSCAR_CHAT_ID = os.getenv("OSCAR_TELEGRAM_CHAT_ID", "8740011589")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+OSCAR_CHAT_ID = os.getenv("OSCAR_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_ID", "")
 
 # {ip: {"sessions": set(), "last_alert": timestamp}}
 ip_tracker: dict[str, dict] = {}
@@ -126,7 +134,7 @@ def _check_ip_abuse(ip: str, session_id: str) -> bool:
 
 ALLOWED_ORIGINS = [
     origin.strip()
-    for origin in os.getenv("CORS_ORIGINS", "*").split(",")
+    for origin in os.getenv("CORS_ORIGINS", "https://akaike.lat,https://www.akaike.lat").split(",")
     if origin.strip()
 ]
 
@@ -162,19 +170,6 @@ def _cleanup_sessions():
             del sessions[sid]
 
 
-async def _try_capture_lead(session_id: str, message: str, client_ip: str = ""):
-    """Attempt to extract and save lead data from a user message."""
-    try:
-        lead = await leads.save_lead(session_id, message, ip=client_ip)
-        if lead:
-            # Notificar a Amelia por Telegram
-            await leads.notify_amelia(lead, session_id, message)
-            # Enviar correo al lead si tiene email
-            if lead.get("correo"):
-                asyncio.create_task(leads.send_lead_email(lead, session_id))
-    except Exception:
-        pass
-
 # ─── Lifespan ────────────────────────────────────────────────────────────────
 
 
@@ -182,6 +177,7 @@ async def _try_capture_lead(session_id: str, message: str, client_ip: str = ""):
 async def lifespan(app: FastAPI):
     await database.init_db()
     await leads.init_leads_db()
+    await analytics_store.init_analytics_db()
     def cleanup_loop():
         while True:
             time.sleep(300)
@@ -189,9 +185,36 @@ async def lifespan(app: FastAPI):
     t = threading.Thread(target=cleanup_loop, daemon=True)
     t.start()
     yield
+    await database.close_db()
 
 
 app = FastAPI(title="M.A.T.I.A.S. API", version="1.0.0", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def protect_sensitive_routes(request: Request, call_next):
+    """Evita que conversaciones, leads e IP queden expuestos públicamente."""
+    sensitive_prefixes = (
+        "/api/interactions/recent",
+        "/api/interactions/stats",
+        "/api/interactions/session/",
+        "/api/leads",
+        "/api/analytics/pageviews",
+        "/api/analytics/visitors",
+        "/api/analytics/journey/",
+        "/api/analytics/ip/",
+        "/api/analytics/conversions",
+        "/api/presentacion/stats",
+        "/api/presentacion/evaluate",
+        "/api/admin/",
+    )
+    if request.url.path.startswith(sensitive_prefixes):
+        provided = request.headers.get("X-Admin-Token", "")
+        if not ADMIN_TOKEN:
+            return Response(content='{"detail":"Administración no configurada"}', status_code=503, media_type="application/json")
+        if not hmac.compare_digest(provided, ADMIN_TOKEN):
+            return Response(content='{"detail":"No autorizado"}', status_code=401, media_type="application/json")
+    return await call_next(request)
 
 app.add_middleware(
     CORSMiddleware,
@@ -248,6 +271,23 @@ async def health():
     return HealthResponse(status="ok", agent="M.A.T.I.A.S.")
 
 
+@app.get("/api/operations/status")
+async def operations_status():
+    """Estado operativo sin exponer datos personales ni secretos."""
+    analytics = await analytics_store.get_analytics_dashboard()
+    automation = await leads.get_automation_status()
+    return {
+        "status": "ok",
+        "database": analytics.get("database"),
+        "model": MODEL_ID,
+        "meeting_url_configured": bool(MEETING_URL),
+        "email_configured": bool(os.getenv("ZOHO_APP_PASSWORD")),
+        "telegram_configured": bool(TELEGRAM_BOT_TOKEN and OSCAR_CHAT_ID),
+        "analytics": analytics,
+        "automation": automation,
+    }
+
+
 @app.post("/api/session/new", response_model=SessionResponse)
 async def new_session(request: Request):
     sid = str(uuid.uuid4())
@@ -274,18 +314,30 @@ async def delete_session(session_id: str):
 async def chat(req: ChatRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacio")
+    if len(req.message) > MAX_MESSAGE_LENGTH:
+        raise HTTPException(status_code=413, detail="El mensaje excede el tamaño permitido")
 
     # ── Detección de abuso por IP ──
     client_ip = _get_client_ip(request)
     sid = req.session_id
 
     with sessions_lock:
-        if sid and sid in sessions:
-            session = sessions[sid]
-        else:
-            sid = str(uuid.uuid4())
+        session = sessions.get(sid) if sid else None
+
+    # Reconstruir contexto desde PostgreSQL después de reinicios o despliegues.
+    if not session and sid:
+        persisted = await database.get_session_interactions(sid, MAX_HISTORY)
+        if persisted:
             session = Session(sid)
-            sessions[sid] = session
+            for item in reversed(persisted):
+                session.add_message(item["role"], item["content"])
+
+    if not session:
+        sid = str(uuid.uuid4())
+        session = Session(sid)
+    assert sid is not None
+    with sessions_lock:
+        sessions[sid] = session
 
     # Trackear IP y verificar umbral de abuso
     if _check_ip_abuse(client_ip, sid):
@@ -294,29 +346,37 @@ async def chat(req: ChatRequest, request: Request):
     session.add_message("user", req.message.strip())
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
 
-    # Lead capture: try to extract contact data from user's message
-    asyncio.ensure_future(_try_capture_lead(sid, req.message.strip(), client_ip))
+    # Persistencia sincrónica: nunca responder sin haber guardado los datos compartidos.
+    lead = await leads.save_lead(sid, req.message.strip(), ip=client_ip)
+    if lead:
+        # Los canales son idempotentes y el worker local reintenta cualquier pendiente.
+        asyncio.create_task(leads.process_lead_automation(lead, sid, req.message.strip()))
 
-    # Lead capture — elegant hook for contact data (MEJORADO 2026-06-17)
-    # En vez de inyectar un system message que confunde al modelo,
-    # agregamos un recordatorio claro como prefijo del historial
-    if len(session.messages) == 2:
-        session.messages[1] = {
-            "role": "user",
-            "content": (
-                "[Instruccion interna para el asistente — NO mostrar al usuario]\n"
-                f"Mensaje del usuario: {req.message.strip()}\n\n"
-                "RECUERDA: Responde PRIMERO la pregunta del usuario con valor real. "
-                "DESPUES, ofrece enviarle informacion adicional y pide sus datos de contacto "
-                "(nombre, empresa, cargo, WhatsApp, correo) de forma elegante. "
-                "Siempre cierra con CTA de demo."
-            )
-        }
+    meeting_terms = ("agendar", "agenda", "reunión", "reunion", "demo", "cita", "calendario")
+    if any(term in req.message.lower() for term in meeting_terms):
+        content = (
+            "Puedes elegir directamente un horario disponible en el calendario de Oscar. "
+            f"La invitación y el enlace de reunión se confirman automáticamente: {MEETING_URL} "
+            "Si me compartes tu nombre, empresa, correo y WhatsApp, Amelia también te acompaña con la coordinación."
+        )
+        session.add_message("assistant", content)
+        await database.log_interaction(sid, "assistant", content, MODEL_ID, "web")
+        return ChatResponse(reply=content, session_id=sid)
 
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API key no configurada")
 
     try:
+        import knowledge_base
+
+        context = knowledge_base.search_relevant(req.message.strip(), max_chars=6000)
+        model_messages = [dict(message) for message in session.messages]
+        if context:
+            model_messages[-1]["content"] = (
+                "[CONTEXTO INTERNO VERIFICADO — úsalo como fuente y no lo cites literalmente]\n"
+                f"{context}\n[/CONTEXTO INTERNO VERIFICADO]\n\n"
+                f"PREGUNTA DEL VISITANTE: {req.message.strip()}"
+            )
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(
                 f"{BASE_URL}/chat/completions",
@@ -326,7 +386,7 @@ async def chat(req: ChatRequest, request: Request):
                 },
                 json={
                     "model": MODEL_ID,
-                    "messages": session.messages,
+                    "messages": model_messages,
                     "temperature": TEMPERATURE,
                     "max_tokens": MAX_TOKENS,
                 },
@@ -380,14 +440,14 @@ async def track_pageview(req: AnalyticsPageView, request: Request):
     source = req.utm_source or req.source or ""
     if not source and referrer:
         source = referrer  # fallback: dominio de referencia
-    await database.log_page_view(req.session_id, req.url, referrer, ua, country, source=source, ip=client_ip)
+    await analytics_store.log_page_view(req.session_id, req.url, referrer, ua, country, source=source, ip=client_ip)
     return {"status": "ok"}
 
 
 @app.post("/api/analytics/event")
 async def track_event(req: AnalyticsEvent, request: Request):
     client_ip = _get_client_ip(request)
-    await database.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata, ip=client_ip)
+    await analytics_store.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata, ip=client_ip)
     return {"status": "ok"}
 
 
@@ -396,19 +456,19 @@ async def track_event(req: AnalyticsEvent, request: Request):
 
 @app.get("/api/analytics/dashboard")
 async def analytics_dashboard():
-    data = await database.get_analytics_dashboard()
+    data = await analytics_store.get_analytics_dashboard()
     return data
 
 
 @app.get("/api/analytics/pageviews")
 async def analytics_pageviews(limit: int = 50):
-    rows = await database.get_recent_pageviews(limit)
+    rows = await analytics_store.get_recent_pageviews(limit)
     return {"total": len(rows), "pageviews": rows}
 
 
 @app.get("/api/analytics/visitors")
 async def analytics_visitors(limit: int = 50):
-    rows = await database.get_visitor_sessions(limit)
+    rows = await analytics_store.get_visitor_sessions(limit)
     return {"total": len(rows), "visitors": rows}
 
 
@@ -426,8 +486,8 @@ async def get_leads(limit: int = 50):
 @app.get("/api/analytics/journey/{session_id}")
 async def get_session_journey(session_id: str):
     """Reconstruye el journey completo de una sesión: pageviews, eventos, lead, sesiones hermanas (misma IP)."""
-    pageviews = await database.get_page_views_by_session(session_id)
-    events = await database.get_events_by_session(session_id)
+    pageviews = await analytics_store.get_page_views_by_session(session_id)
+    events = await analytics_store.get_events_by_session(session_id)
     lead_data = await leads.get_lead_by_session(session_id)
 
     # Buscar sesiones hermanas (misma IP)
@@ -437,7 +497,7 @@ async def get_session_journey(session_id: str):
     elif lead_data:
         ip = lead_data.get("ip", "")
 
-    sibling_sessions = await database.get_sessions_by_ip(ip) if ip else []
+    sibling_sessions = await analytics_store.get_sessions_by_ip(ip) if ip else []
 
     # Construir timeline unificado
     timeline = []
@@ -473,8 +533,8 @@ async def get_session_journey(session_id: str):
 @app.get("/api/analytics/ip/{ip}")
 async def get_ip_history(ip: str):
     """Historial completo de una IP: sesiones, pageviews y leads capturados."""
-    sessions = await database.get_sessions_by_ip(ip)
-    pageviews = await database.get_page_views_by_ip(ip)
+    sessions = await analytics_store.get_sessions_by_ip(ip)
+    pageviews = await analytics_store.get_page_views_by_ip(ip)
     leads_list = await leads.get_leads_by_ip(ip)
 
     return {
@@ -490,50 +550,8 @@ async def get_ip_history(ip: str):
 @app.get("/api/analytics/conversions")
 async def get_conversions(dias: int = 7):
     """Lista sesiones que hicieron demo_click (agendaron reunión)."""
-    from datetime import datetime as dt, timedelta
-    db = await database._get_sqlite()
-    try:
-        since = (dt.utcnow() - timedelta(days=dias)).isoformat()
-        cursor = await db.execute(
-            """SELECT session_id, timestamp, element, url 
-               FROM analytics_events 
-               WHERE event_type = 'demo_click' AND timestamp >= ? 
-               ORDER BY timestamp DESC""",
-            (since,)
-        )
-        conversions = [dict(row) for row in await cursor.fetchall()]
-
-        # Enriquecer con IP y resumen de cada sesión
-        enriched = []
-        for c in conversions:
-            sid = c["session_id"]
-            # IP de los pageviews de esa sesión
-            cursor2 = await db.execute(
-                "SELECT ip, country FROM page_views WHERE session_id = ? LIMIT 1", (sid,)
-            )
-            pv = await cursor2.fetchone()
-            ip = dict(pv)["ip"] if pv else ""
-            country = dict(pv)["country"] if pv else ""
-
-            # Contar pageviews
-            cursor3 = await db.execute(
-                "SELECT COUNT(*) as c FROM page_views WHERE session_id = ?", (sid,)
-            )
-            pv_count = dict(await cursor3.fetchone())["c"]
-
-            enriched.append({
-                "session_id": sid,
-                "timestamp": c["timestamp"],
-                "url_desde": c["url"] or "",
-                "elemento": c["element"] or "",
-                "ip": ip,
-                "country": country,
-                "pageviews_en_sesion": pv_count,
-            })
-
-        return {"total": len(enriched), "dias": dias, "conversions": enriched}
-    finally:
-        await db.close()
+    conversions = await analytics_store.get_conversions(dias)
+    return {"total": len(conversions), "dias": dias, "conversions": conversions}
 
 
 # ─── Agente de Presentaciones — RAG sobre conocimiento interno ──────────
