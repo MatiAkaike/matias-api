@@ -278,8 +278,9 @@ async def operations_status():
     automation = await leads.get_automation_status()
     return {
         "status": "ok",
-        "database": analytics.get("database"),
+        "database": "postgresql" if await database._get_pg_pool() else "unavailable",
         "model": MODEL_ID,
+        "build_sha": os.getenv("RENDER_GIT_COMMIT", "unknown"),
         "meeting_url_configured": bool(MEETING_URL),
         "email_configured": bool(os.getenv("ZOHO_APP_PASSWORD")),
         "telegram_configured": bool(TELEGRAM_BOT_TOKEN and OSCAR_CHAT_ID),
