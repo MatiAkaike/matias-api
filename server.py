@@ -6,6 +6,8 @@ import uuid
 import time
 import threading
 import asyncio
+import ipaddress
+from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
@@ -14,7 +16,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Load .env for local development
 load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
@@ -67,16 +69,39 @@ OSCAR_CHAT_ID = os.getenv("OSCAR_TELEGRAM_CHAT_ID") or os.getenv("TELEGRAM_CHAT_
 # {ip: {"sessions": set(), "last_alert": timestamp}}
 ip_tracker: dict[str, dict] = {}
 ip_tracker_lock = threading.Lock()
+rate_tracker: dict[tuple[str, str], deque[float]] = {}
+rate_tracker_lock = threading.Lock()
 
 def _get_client_ip(request: Request) -> str:
-    """Extrae la IP real del cliente (respeta proxies como Render/Cloudflare)."""
+    """Usa la IP normalizada por Uvicorn; solo recurre a XFF desde proxy privado."""
+    peer = request.client.host if request.client else ""
+    try:
+        if peer and not ipaddress.ip_address(peer).is_private:
+            return peer
+    except ValueError:
+        pass
     forwarded = request.headers.get("X-Forwarded-For", "")
     if forwarded:
-        return forwarded.split(",")[0].strip()
-    cf_ip = request.headers.get("CF-Connecting-IP", "")
-    if cf_ip:
-        return cf_ip
-    return request.client.host if request.client else "unknown"
+        for candidate in reversed([value.strip() for value in forwarded.split(",")]):
+            try:
+                if not ipaddress.ip_address(candidate).is_private:
+                    return candidate
+            except ValueError:
+                continue
+    return peer or "unknown"
+
+
+def _allow_request(ip: str, bucket: str, limit: int, window: int = 60) -> bool:
+    now = time.time()
+    key = (ip, bucket)
+    with rate_tracker_lock:
+        timestamps = rate_tracker.setdefault(key, deque())
+        while timestamps and timestamps[0] <= now - window:
+            timestamps.popleft()
+        if len(timestamps) >= limit:
+            return False
+        timestamps.append(now)
+        return True
 
 
 async def _send_abuse_alert(ip: str, session_count: int, last_session_id: str):
@@ -160,6 +185,7 @@ class Session:
 
 sessions: dict[str, Session] = {}
 sessions_lock = threading.Lock()
+session_request_locks: dict[str, asyncio.Lock] = {}
 
 
 def _cleanup_sessions():
@@ -168,6 +194,20 @@ def _cleanup_sessions():
         expired = [sid for sid, s in sessions.items() if now - s.last_access > SESSION_TTL]
         for sid in expired:
             del sessions[sid]
+            session_request_locks.pop(sid, None)
+        stale_new_locks = [
+            key for key, lock in session_request_locks.items()
+            if key.startswith("new:") and not lock.locked()
+        ]
+        for key in stale_new_locks:
+            session_request_locks.pop(key, None)
+    with rate_tracker_lock:
+        stale_rate_keys = [
+            key for key, timestamps in rate_tracker.items()
+            if not timestamps or timestamps[-1] < now - 300
+        ]
+        for key in stale_rate_keys:
+            del rate_tracker[key]
 
 
 # ─── Lifespan ────────────────────────────────────────────────────────────────
@@ -194,7 +234,24 @@ app = FastAPI(title="M.A.T.I.A.S. API", version="1.0.0", lifespan=lifespan)
 @app.middleware("http")
 async def protect_sensitive_routes(request: Request, call_next):
     """Evita que conversaciones, leads e IP queden expuestos públicamente."""
+    content_length = request.headers.get("content-length", "0")
+    if content_length.isdigit() and int(content_length) > 65536:
+        return Response(content='{"detail":"Solicitud demasiado grande"}', status_code=413, media_type="application/json")
+
+    client_ip = _get_client_ip(request)
+    rate_limits = {
+        "/api/chat": (20, "chat"),
+        "/api/session/new": (30, "session"),
+        "/api/analytics/pageview": (120, "analytics"),
+        "/api/analytics/event": (120, "analytics"),
+    }
+    if request.method == "POST" and request.url.path in rate_limits:
+        limit, bucket = rate_limits[request.url.path]
+        if not _allow_request(client_ip, bucket, limit):
+            return Response(content='{"detail":"Demasiadas solicitudes"}', status_code=429, media_type="application/json")
+
     sensitive_prefixes = (
+        "/api/operations/status",
         "/api/interactions/recent",
         "/api/interactions/stats",
         "/api/interactions/session/",
@@ -204,6 +261,7 @@ async def protect_sensitive_routes(request: Request, call_next):
         "/api/analytics/journey/",
         "/api/analytics/ip/",
         "/api/analytics/conversions",
+        "/api/analytics/dashboard",
         "/api/presentacion/stats",
         "/api/presentacion/evaluate",
         "/api/admin/",
@@ -228,8 +286,8 @@ app.add_middleware(
 
 
 class ChatRequest(BaseModel):
-    message: str
-    session_id: Optional[str] = None
+    message: str = Field(min_length=1, max_length=4000)
+    session_id: Optional[str] = Field(default=None, max_length=100)
 
 
 class ChatResponse(BaseModel):
@@ -244,31 +302,36 @@ class SessionResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str
     agent: str
+    build_sha: str
 
 
 class AnalyticsPageView(BaseModel):
-    session_id: str
-    url: str
-    referrer: Optional[str] = None
-    source: Optional[str] = None
-    utm_source: Optional[str] = None
-    utm_medium: Optional[str] = None
-    utm_campaign: Optional[str] = None
+    session_id: str = Field(min_length=1, max_length=100)
+    url: str = Field(min_length=1, max_length=2048)
+    referrer: Optional[str] = Field(default=None, max_length=2048)
+    source: Optional[str] = Field(default=None, max_length=100)
+    utm_source: Optional[str] = Field(default=None, max_length=200)
+    utm_medium: Optional[str] = Field(default=None, max_length=200)
+    utm_campaign: Optional[str] = Field(default=None, max_length=200)
 
 
 class AnalyticsEvent(BaseModel):
-    session_id: str
-    event_type: str
-    element: Optional[str] = None
-    url: Optional[str] = None
-    metadata: Optional[str] = None
+    session_id: str = Field(min_length=1, max_length=100)
+    event_type: str = Field(min_length=1, max_length=100)
+    element: Optional[str] = Field(default=None, max_length=500)
+    url: Optional[str] = Field(default=None, max_length=2048)
+    metadata: Optional[str] = Field(default=None, max_length=4000)
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
 
 @app.get("/api/health", response_model=HealthResponse)
 async def health():
-    return HealthResponse(status="ok", agent="M.A.T.I.A.S.")
+    return HealthResponse(
+        status="ok",
+        agent="M.A.T.I.A.S.",
+        build_sha=os.getenv("RENDER_GIT_COMMIT", "unknown"),
+    )
 
 
 @app.get("/api/operations/status")
@@ -313,6 +376,14 @@ async def delete_session(session_id: str):
 
 @app.post("/api/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest, request: Request):
+    lock_key = req.session_id or f"new:{_get_client_ip(request)}"
+    with sessions_lock:
+        request_lock = session_request_locks.setdefault(lock_key, asyncio.Lock())
+    async with request_lock:
+        return await _chat_impl(req, request)
+
+
+async def _chat_impl(req: ChatRequest, request: Request):
     if not req.message.strip():
         raise HTTPException(status_code=400, detail="El mensaje no puede estar vacio")
     if len(req.message) > MAX_MESSAGE_LENGTH:
@@ -348,10 +419,7 @@ async def chat(req: ChatRequest, request: Request):
     await database.log_interaction(sid, "user", req.message.strip(), MODEL_ID, "web")
 
     # Persistencia sincrónica: nunca responder sin haber guardado los datos compartidos.
-    lead = await leads.save_lead(sid, req.message.strip(), ip=client_ip)
-    if lead:
-        # Los canales son idempotentes y el worker local reintenta cualquier pendiente.
-        asyncio.create_task(leads.process_lead_automation(lead, sid, req.message.strip()))
+    await leads.save_lead(sid, req.message.strip(), ip=client_ip)
 
     meeting_terms = ("agendar", "agenda", "reunión", "reunion", "demo", "cita", "calendario")
     if any(term in req.message.lower() for term in meeting_terms):

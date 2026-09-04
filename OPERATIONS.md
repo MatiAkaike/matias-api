@@ -10,21 +10,23 @@
 
 ## Estado operativo
 
-`GET /api/operations/status` devuelve solo conteos y configuración booleana, sin PII.
+`GET /api/operations/status` devuelve conteos y configuración operativa sin PII, y requiere `X-Admin-Token`.
 
 Los endpoints con conversaciones, leads, journeys e IP requieren el header `X-Admin-Token` y la variable `MATIAS_ADMIN_TOKEN`. Si no está configurada, responden 503 de forma segura.
 
 ## Worker Amelia
 
-Archivo: `ops/matias_lead_worker.py`
+Fuente versionada: `ops/matias_lead_worker.py`
+
+Copia ejecutable endurecida: `~/.openclaw-runtime/matias-lead-worker/worker.py`
 
 LaunchAgent: `~/Library/LaunchAgents/com.akaike.matias-lead-worker.plist`
 
-Frecuencia: cada 30 segundos. Los envíos son idempotentes mediante `email_sent`, `whatsapp_sent` y `telegram_sent` en `leads`.
+Frecuencia: cada 30 segundos. El worker reclama atómicamente cada canal mediante estados `pending/failed → processing → sent` e intentos independientes. Un estado `processing` no se reenvía automáticamente: debe revisarse antes de liberarlo para evitar duplicados después de una caída ambigua del proveedor.
 
 Verificación manual sin enviar mensajes:
 
-`/Users/ogutimo/.openclaw-venv/bin/python ops/matias_lead_worker.py --dry-run`
+`/Users/ogutimo/.openclaw-venv/bin/python ~/.openclaw-runtime/matias-lead-worker/worker.py --dry-run`
 
 Logs:
 
