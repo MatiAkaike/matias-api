@@ -112,7 +112,6 @@ async def _process_lead(lead: dict, dry_run: bool = False) -> dict:
 
 
 async def run_once(dry_run: bool = False) -> dict:
-    await lead_service.init_leads_db()
     pending = await lead_service.get_pending_leads(20, claim=not dry_run)
     results = []
     for lead in pending:
