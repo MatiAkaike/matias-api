@@ -35,6 +35,7 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)s %(message)s",
     handlers=[logging.FileHandler(LOG_PATH), logging.StreamHandler()],
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
 logger = logging.getLogger("matias-lead-worker")
 
 
