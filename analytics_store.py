@@ -78,6 +78,8 @@ async def init_analytics_db() -> None:
         except Exception:
             # Una instalación antigua puede tener sesiones repetidas; no se borran automáticamente.
             pass
+        for table in ("page_views", "analytics_events", "analytics_sessions"):
+            await conn.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
 
 
 def _detect_device(user_agent: str) -> tuple[str, str, str]:
@@ -122,30 +124,28 @@ async def _upsert_session(
     event_delta: int = 0,
 ) -> None:
     device, browser, os_name = _detect_device(user_agent)
-    result = await conn.execute(
+    await conn.execute(
         """
-        UPDATE analytics_sessions SET
-            last_seen=NOW(), ip=COALESCE(NULLIF($2,''), ip),
-            user_agent=COALESCE(NULLIF($3,''), user_agent), country=$4,
-            source=$5, device_type=$6, browser=$7, os=$8,
-            page_views=COALESCE(page_views,0)+$9,
-            events=COALESCE(events,0)+$10
-        WHERE session_id=$1
+        INSERT INTO analytics_sessions (
+            session_id, ip, user_agent, first_seen, last_seen, page_views, events,
+            device_type, browser, os, country, source
+        ) VALUES ($1,$2,$3,NOW(),NOW(),$9,$10,$6,$7,$8,$4,$5)
+        ON CONFLICT (session_id) WHERE session_id IS NOT NULL DO UPDATE SET
+            last_seen=NOW(),
+            ip=COALESCE(NULLIF(EXCLUDED.ip,''), analytics_sessions.ip),
+            user_agent=COALESCE(NULLIF(EXCLUDED.user_agent,''), analytics_sessions.user_agent),
+            country=CASE WHEN EXCLUDED.country IN ('','unknown') THEN analytics_sessions.country ELSE EXCLUDED.country END,
+            source=CASE WHEN EXCLUDED.source='' THEN analytics_sessions.source ELSE EXCLUDED.source END,
+            device_type=CASE WHEN EXCLUDED.user_agent='' THEN analytics_sessions.device_type ELSE EXCLUDED.device_type END,
+            browser=CASE WHEN EXCLUDED.user_agent='' THEN analytics_sessions.browser ELSE EXCLUDED.browser END,
+            os=CASE WHEN EXCLUDED.user_agent='' THEN analytics_sessions.os ELSE EXCLUDED.os END,
+            page_views=COALESCE(analytics_sessions.page_views,0)+EXCLUDED.page_views,
+            events=COALESCE(analytics_sessions.events,0)+EXCLUDED.events
         """,
         session_id, ip, user_agent, country, source, device, browser, os_name,
         page_view_delta, event_delta,
     )
-    if result.endswith("0"):
-        await conn.execute(
-            """
-            INSERT INTO analytics_sessions (
-                session_id, ip, user_agent, first_seen, last_seen, page_views, events,
-                device_type, browser, os, country, source
-            ) VALUES ($1,$2,$3,NOW(),NOW(),$4,$5,$6,$7,$8,$9,$10)
-            """,
-            session_id, ip, user_agent, page_view_delta, event_delta,
-            device, browser, os_name, country, source,
-        )
+
 
 
 async def log_page_view(

@@ -43,16 +43,16 @@ SMTP_LOCK = threading.Lock()
 def _extract_lead_data(text: str) -> dict[str, str]:
     """Extrae datos explícitos sin completar ni inferir valores."""
     lead: dict[str, str] = {}
-    email_match = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
-    if email_match:
-        lead["correo"] = email_match.group(0).strip().rstrip(".,")
+    email_matches = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+    if email_matches:
+        lead["correo"] = email_matches[-1].strip().rstrip(".,")
 
-    phone_match = re.search(
+    phone_matches = re.findall(
         r"(?:\+?\d{1,3}[\s.-]?)?(?:\(?\d{2,4}\)?[\s.-]?)?\d{3}[\s.-]?\d{2,4}[\s.-]?\d{2,4}",
         text,
     )
-    if phone_match:
-        digits = re.sub(r"\D", "", phone_match.group(0))
+    if phone_matches:
+        digits = re.sub(r"\D", "", phone_matches[-1])
         if 10 <= len(digits) <= 15:
             lead["whatsapp"] = digits
 
@@ -105,6 +105,9 @@ def _public_lead(row: Any) -> dict[str, Any]:
         "email_error": data.get("email_error") or "",
         "whatsapp_error": data.get("whatsapp_error") or "",
         "telegram_error": data.get("telegram_error") or "",
+        "email_attempts": data.get("email_attempts", 0),
+        "whatsapp_attempts": data.get("whatsapp_attempts", 0),
+        "telegram_attempts": data.get("telegram_attempts", 0),
     }
 
 
@@ -140,6 +143,9 @@ async def init_leads_db() -> None:
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_sent INTEGER DEFAULT 0",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_error TEXT DEFAULT ''",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS automation_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS whatsapp_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_attempts INTEGER DEFAULT 0",
         ]
         for statement in migrations:
             await conn.execute(statement)
@@ -152,6 +158,7 @@ async def init_leads_db() -> None:
             )
         except Exception as exc:
             logger.warning("No se pudo crear índice único de leads por sesión: %s", exc)
+        await conn.execute("ALTER TABLE leads ENABLE ROW LEVEL SECURITY")
 
 
 async def _conversation(session_id: str) -> list[dict[str, str]]:
@@ -173,54 +180,67 @@ async def save_lead(session_id: str, text: str, ip: str = "") -> dict[str, Any] 
         return None
 
     async with pool.acquire() as conn:
-        row = await conn.fetchrow("SELECT * FROM leads WHERE session_id=$1", session_id)
-        before_email = (row or {}).get("email") if row else ""
-        before_phone = (row or {}).get("phone") if row else ""
         payload = json.dumps(conversation, ensure_ascii=False)
-        if row:
-            row = await conn.fetchrow(
-                """
-                UPDATE leads SET
-                    name=COALESCE($2, name), company=COALESCE($3, company),
-                    job_title=COALESCE($4, job_title), phone=COALESCE($5, phone),
-                    email=COALESCE($6, email), original_message=COALESCE(original_message, $7),
-                    conversation_json=$8::jsonb, ip=COALESCE(NULLIF($9,''), ip), updated_at=NOW()
-                WHERE session_id=$1 RETURNING *
-                """,
-                session_id,
-                data.get("nombre"),
-                data.get("empresa"),
-                data.get("cargo"),
-                data.get("whatsapp"),
-                data.get("correo"),
-                text[:1000],
-                payload,
-                ip,
-            )
-        else:
-            row = await conn.fetchrow(
-                """
-                INSERT INTO leads (
-                    session_id, name, company, job_title, phone, email,
-                    original_message, conversation_json, source, ip, created_at, updated_at
-                ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'Web - M.A.T.I.A.S.', $9,NOW(),NOW())
-                RETURNING *
-                """,
-                session_id,
-                data.get("nombre"),
-                data.get("empresa"),
-                data.get("cargo"),
-                data.get("whatsapp"),
-                data.get("correo"),
-                text[:1000],
-                payload,
-                ip,
-            )
+        row = await conn.fetchrow(
+            """
+            INSERT INTO leads (
+                session_id, name, company, job_title, phone, email,
+                original_message, conversation_json, source, ip, created_at, updated_at
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'Web - M.A.T.I.A.S.',$9,NOW(),NOW())
+            ON CONFLICT (session_id) WHERE session_id IS NOT NULL DO UPDATE SET
+                name=COALESCE(EXCLUDED.name, leads.name),
+                company=COALESCE(EXCLUDED.company, leads.company),
+                job_title=COALESCE(EXCLUDED.job_title, leads.job_title),
+                phone=COALESCE(EXCLUDED.phone, leads.phone),
+                email=COALESCE(EXCLUDED.email, leads.email),
+                original_message=COALESCE(leads.original_message, EXCLUDED.original_message),
+                conversation_json=EXCLUDED.conversation_json,
+                ip=COALESCE(NULLIF(EXCLUDED.ip,''), leads.ip),
+                email_sent=CASE
+                    WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email THEN 0
+                    ELSE leads.email_sent END,
+                email_attempts=CASE
+                    WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email THEN 0
+                    ELSE leads.email_attempts END,
+                email_error=CASE
+                    WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email THEN ''
+                    ELSE leads.email_error END,
+                whatsapp_sent=CASE
+                    WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone THEN 0
+                    ELSE leads.whatsapp_sent END,
+                whatsapp_attempts=CASE
+                    WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone THEN 0
+                    ELSE leads.whatsapp_attempts END,
+                whatsapp_error=CASE
+                    WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone THEN ''
+                    ELSE leads.whatsapp_error END,
+                telegram_sent=CASE
+                    WHEN (EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email)
+                      OR (EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone) THEN 0
+                    ELSE leads.telegram_sent END,
+                telegram_attempts=CASE
+                    WHEN (EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email)
+                      OR (EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone) THEN 0
+                    ELSE leads.telegram_attempts END,
+                telegram_error=CASE
+                    WHEN (EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email)
+                      OR (EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone) THEN ''
+                    ELSE leads.telegram_error END,
+                updated_at=NOW()
+            RETURNING *
+            """,
+            session_id,
+            data.get("nombre"),
+            data.get("empresa"),
+            data.get("cargo"),
+            data.get("whatsapp"),
+            data.get("correo"),
+            text[:1000],
+            payload,
+            ip,
+        )
         lead = _public_lead(row)
         lead["_contact_ready"] = bool(lead.get("correo") or lead.get("whatsapp"))
-        lead["_new_contact_channel"] = bool(
-            (lead.get("correo") and not before_email) or (lead.get("whatsapp") and not before_phone)
-        )
         return lead
 
 
@@ -232,7 +252,8 @@ async def _update_status(session_id: str, channel: str, sent: bool, error: str =
         raise RuntimeError("PostgreSQL no disponible para actualizar automatización")
     async with pool.acquire() as conn:
         await conn.execute(
-            f"UPDATE leads SET {channel}_sent=$2, {channel}_error=$3, updated_at=NOW() WHERE session_id=$1",
+            f"UPDATE leads SET {channel}_sent=$2, {channel}_error=$3, updated_at=NOW() "
+            f"WHERE session_id=$1 AND {channel}_sent=3",
             session_id,
             1 if sent else 2,
             error[:500],
@@ -327,15 +348,8 @@ async def send_lead_email(lead: dict[str, Any], session_id: str) -> dict[str, An
 
 
 async def process_lead_automation(lead: dict[str, Any], session_id: str, user_message: str = "") -> None:
-    """Ejecuta canales disponibles; el worker local reintenta lo pendiente."""
-    if not lead.get("correo") and not lead.get("whatsapp"):
-        return
-    try:
-        await notify_amelia(lead, session_id, user_message)
-        if lead.get("correo"):
-            await send_lead_email(lead, session_id)
-    except Exception:
-        logger.exception("Fallo en automatización de lead %s", session_id)
+    """Compatibilidad: la salida externa solo la ejecuta el worker con claim atómico."""
+    return None
 
 
 async def mark_whatsapp_status(session_id: str, sent: bool, error: str = "") -> None:
@@ -350,25 +364,49 @@ async def get_pending_leads(limit: int = 20, claim: bool = True) -> list[dict[st
     pool = await database._get_pg_pool()
     if not pool:
         return []
+    eligible = """
+        (email IS NOT NULL AND email<>'' AND email_sent IN (0,2) AND email_attempts<5)
+        OR (phone IS NOT NULL AND phone<>'' AND whatsapp_sent IN (0,2) AND whatsapp_attempts<5)
+        OR (((email IS NOT NULL AND email<>'') OR (phone IS NOT NULL AND phone<>''))
+            AND telegram_sent IN (0,2) AND telegram_attempts<5)
+    """
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT * FROM leads
-            WHERE automation_attempts < 5 AND (
-                (email IS NOT NULL AND email <> '' AND email_sent <> 1) OR
-                (phone IS NOT NULL AND phone <> '' AND whatsapp_sent <> 1) OR
-                ((email IS NOT NULL AND email <> '') OR (phone IS NOT NULL AND phone <> ''))
-                    AND telegram_sent <> 1
+        if not claim:
+            rows = await conn.fetch(
+                f"SELECT * FROM leads WHERE {eligible} ORDER BY created_at ASC LIMIT $1",
+                limit,
             )
-            ORDER BY created_at ASC LIMIT $1
-            """,
-            limit,
-        )
-        if rows and claim:
-            ids = [row["id"] for row in rows]
-            await conn.execute(
-                "UPDATE leads SET automation_attempts=automation_attempts+1, updated_at=NOW() WHERE id=ANY($1::int[])",
-                ids,
+        else:
+            rows = await conn.fetch(
+                f"""
+                WITH candidates AS (
+                    SELECT id FROM leads WHERE {eligible}
+                    ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT $1
+                )
+                UPDATE leads AS lead SET
+                    email_attempts=CASE WHEN lead.email IS NOT NULL AND lead.email<>''
+                        AND lead.email_sent IN (0,2) AND lead.email_attempts<5
+                        THEN lead.email_attempts+1 ELSE lead.email_attempts END,
+                    email_sent=CASE WHEN lead.email IS NOT NULL AND lead.email<>''
+                        AND lead.email_sent IN (0,2) AND lead.email_attempts<5
+                        THEN 3 ELSE lead.email_sent END,
+                    whatsapp_attempts=CASE WHEN lead.phone IS NOT NULL AND lead.phone<>''
+                        AND lead.whatsapp_sent IN (0,2) AND lead.whatsapp_attempts<5
+                        THEN lead.whatsapp_attempts+1 ELSE lead.whatsapp_attempts END,
+                    whatsapp_sent=CASE WHEN lead.phone IS NOT NULL AND lead.phone<>''
+                        AND lead.whatsapp_sent IN (0,2) AND lead.whatsapp_attempts<5
+                        THEN 3 ELSE lead.whatsapp_sent END,
+                    telegram_attempts=CASE WHEN (COALESCE(lead.email,'')<>'' OR COALESCE(lead.phone,'')<>'')
+                        AND lead.telegram_sent IN (0,2) AND lead.telegram_attempts<5
+                        THEN lead.telegram_attempts+1 ELSE lead.telegram_attempts END,
+                    telegram_sent=CASE WHEN (COALESCE(lead.email,'')<>'' OR COALESCE(lead.phone,'')<>'')
+                        AND lead.telegram_sent IN (0,2) AND lead.telegram_attempts<5
+                        THEN 3 ELSE lead.telegram_sent END,
+                    updated_at=NOW()
+                FROM candidates WHERE lead.id=candidates.id
+                RETURNING lead.*
+                """,
+                limit,
             )
         return [_public_lead(row) for row in rows]
 
@@ -418,10 +456,11 @@ async def get_automation_status() -> dict[str, Any]:
         row = await conn.fetchrow(
             """
             SELECT COUNT(*) total,
-                   COUNT(*) FILTER (WHERE email IS NOT NULL AND email<>'' AND email_sent<>1) pending_email,
-                   COUNT(*) FILTER (WHERE phone IS NOT NULL AND phone<>'' AND whatsapp_sent<>1) pending_whatsapp,
-                   COUNT(*) FILTER (WHERE telegram_sent<>1) pending_telegram,
-                   COUNT(*) FILTER (WHERE email_sent=2 OR whatsapp_sent=2 OR telegram_sent=2) failures
+                   COUNT(*) FILTER (WHERE email IS NOT NULL AND email<>'' AND email_sent IN (0,2)) pending_email,
+                   COUNT(*) FILTER (WHERE phone IS NOT NULL AND phone<>'' AND whatsapp_sent IN (0,2)) pending_whatsapp,
+                   COUNT(*) FILTER (WHERE (COALESCE(email,'')<>'' OR COALESCE(phone,'')<>'') AND telegram_sent IN (0,2)) pending_telegram,
+                   COUNT(*) FILTER (WHERE email_sent=2 OR whatsapp_sent=2 OR telegram_sent=2) failures,
+                   COUNT(*) FILTER (WHERE email_sent=3 OR whatsapp_sent=3 OR telegram_sent=3) processing
             FROM leads
             """
         )

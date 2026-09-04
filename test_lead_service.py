@@ -22,6 +22,14 @@ class LeadExtractionTests(unittest.TestCase):
         lead = lead_service._extract_lead_data("Tenemos 25 solicitudes y 3 productos")
         self.assertNotIn("whatsapp", lead)
 
+    def test_latest_contact_correction_wins(self):
+        lead = lead_service._extract_lead_data(
+            "Mi correo es anterior@example.com y mi WhatsApp 3001112233. "
+            "Corrección: nuevo@example.com y 3014445566"
+        )
+        self.assertEqual(lead["correo"], "nuevo@example.com")
+        self.assertEqual(lead["whatsapp"], "3014445566")
+
 
 class AgentConfigurationTests(unittest.TestCase):
     def test_prompt_uses_canonical_calendar_and_hides_prices(self):

@@ -14,7 +14,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 OPENCLAW = Path("/Volumes/OpenClaw/OPENCLAW")
-MATIAS_API = Path(__file__).resolve().parents[1]
+MATIAS_API = Path(os.getenv("MATIAS_API_PATH", "/Volumes/OpenClaw/Matias Seek/api"))
 load_dotenv(OPENCLAW / ".env")
 load_dotenv(Path("/Volumes/OpenClaw/Matias Seek/config/.env"), override=False)
 sys.path.insert(0, str(OPENCLAW))
@@ -72,42 +72,50 @@ async def _process_lead(lead: dict, dry_run: bool = False) -> dict:
     session_id = lead["session_id"]
     result = {"session_id": session_id, "email": "skip", "telegram": "skip", "whatsapp": "skip"}
 
-    if lead.get("telegram_sent") != 1:
+    if lead.get("telegram_sent") == 3:
         if dry_run:
             result["telegram"] = "dry-run"
         else:
             sent = await lead_service.notify_amelia(lead, session_id)
             result["telegram"] = "sent" if sent.get("sent") else "error"
 
-    if lead.get("correo") and lead.get("email_sent") != 1:
+    if lead.get("correo") and lead.get("email_sent") == 3:
         if dry_run:
             result["email"] = "dry-run"
         else:
-            sent = await asyncio.to_thread(
-                enviar_html,
-                to=lead["correo"],
-                subject="Información de M.A.T.I.A.S. y reunión con Akaike",
-                html_body=_email_body(lead),
-            )
-            ok = sent.get("status") == "OK"
-            await lead_service.mark_email_status(session_id, ok, sent.get("error", ""))
-            result["email"] = "sent" if ok else "error"
+            try:
+                sent = await asyncio.to_thread(
+                    enviar_html,
+                    to=lead["correo"],
+                    subject="Información de M.A.T.I.A.S. y reunión con Akaike",
+                    html_body=_email_body(lead),
+                )
+                ok = sent.get("status") == "OK"
+                await lead_service.mark_email_status(session_id, ok, sent.get("error", ""))
+                result["email"] = "sent" if ok else "error"
+            except Exception as exc:
+                await lead_service.mark_email_status(session_id, False, str(exc))
+                result["email"] = "error"
 
     phone = _normalize_phone(lead.get("whatsapp") or "")
-    if phone and lead.get("whatsapp_sent") != 1:
+    if phone and lead.get("whatsapp_sent") == 3:
         if dry_run:
             result["whatsapp"] = "dry-run"
         else:
-            sent = await asyncio.to_thread(
-                send_whatsapp_message,
-                phone,
-                _whatsapp_message(lead),
-                "personal",
-                lead.get("nombre") or "Lead M.A.T.I.A.S. Web",
-            )
-            ok = sent.get("status") == "OK"
-            await lead_service.mark_whatsapp_status(session_id, ok, sent.get("error", ""))
-            result["whatsapp"] = "sent" if ok else "error"
+            try:
+                sent = await asyncio.to_thread(
+                    send_whatsapp_message,
+                    phone,
+                    _whatsapp_message(lead),
+                    "personal",
+                    lead.get("nombre") or "Lead M.A.T.I.A.S. Web",
+                )
+                ok = sent.get("status") == "OK"
+                await lead_service.mark_whatsapp_status(session_id, ok, sent.get("error", ""))
+                result["whatsapp"] = "sent" if ok else "error"
+            except Exception as exc:
+                await lead_service.mark_whatsapp_status(session_id, False, str(exc))
+                result["whatsapp"] = "error"
     return result
 
 
