@@ -675,6 +675,11 @@ AGENDA_CTA = (
     "Si quieres más información o ver cómo esto aplica a tu cartera, "
     f"puedes separar una reunión acá:\n{AGENDA_URL}"
 )
+FALLBACK_REPLY = (
+    "Puedo orientarte sobre riesgo de crédito, los modelos de M.A.T.I.A.S. y los servicios de Akaike. "
+    "Cuéntame qué te interesa y te guío.\n\n"
+    f"Si quieres conocer más, agenda una reunión aquí:\n{AGENDA_URL}"
+)
 
 PRESENTACION_SYSTEM = (
     "Eres M.A.T.I.A.S., el asistente comercial de Akaike Credit Risk Solutions. "
@@ -844,7 +849,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
 
     if not full_context.strip():
         return PresentacionResponse(
-            reply="Con las fuentes públicas cargadas no tengo evidencia suficiente para responderlo con rigor.\n" + AGENDA_URL,
+            reply=FALLBACK_REPLY,
             session_id=req.session_id,
             source="sin_fuente",
         )
