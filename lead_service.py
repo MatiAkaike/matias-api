@@ -24,7 +24,7 @@ logger = logging.getLogger("matias.leads")
 DATABASE_URL = database._build_dsn()
 MEETING_URL = os.getenv(
     "GOOGLE_CALENDAR_BOOKING_URL",
-    "https://calendar.app.google/YhY1KSgjktrRrcBb6",
+    "https://calendar.app.google/up2iyv5hJkJpRJta9",
 )
 TELEGRAM_BOT_TOKEN = os.getenv("AMELIA_TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID = (

@@ -54,7 +54,7 @@ TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
 MEETING_URL = os.getenv(
     "GOOGLE_CALENDAR_BOOKING_URL",
-    "https://calendar.app.google/YhY1KSgjktrRrcBb6",
+    "https://calendar.app.google/up2iyv5hJkJpRJta9",
 )
 MAX_MESSAGE_LENGTH = int(os.getenv("MAX_MESSAGE_LENGTH", "4000"))
 ADMIN_TOKEN = os.getenv("MATIAS_ADMIN_TOKEN", "")
@@ -642,6 +642,12 @@ class PresentacionResponse(PydanticBase):
     source: str = "conocimiento_interno"
     sources: list[str] = Field(default_factory=list)
 
+AGENDA_URL = "https://calendar.app.google/up2iyv5hJkJpRJta9"
+AGENDA_CTA = (
+    "Si quieres más información o ver cómo esto aplica a tu cartera, "
+    f"puedes separar una reunión acá:\n{AGENDA_URL}"
+)
+
 PRESENTACION_SYSTEM = (
     "Eres M.A.T.I.A.S., el asistente comercial de Akaike Credit Risk Solutions. "
     "Tu objetivo es captar el interés del prospecto y llevarlo a agendar una reunión. "
@@ -653,7 +659,7 @@ PRESENTACION_SYSTEM = (
     "4. PROHIBIDO inferir o inventar. Solo información del contexto disponible.\n"
     "5. ZERO-PII: nunca nombres de autores, clientes, empresas terceras, asistentes ni personas naturales.\n"
     "6. SIEMPRE cierra tu respuesta con una llamada a la acción para agendar o recibir más información.\n"
-    "7. Cuando el prospecto muestre interés o pida reunión, demo o detalle, ofrece únicamente: https://calendar.app.google/YhY1KSgjktrRrcBb6\n"
+    "7. Cuando el prospecto muestre interés o pida reunión, demo o detalle, ofrece únicamente: https://calendar.app.google/up2iyv5hJkJpRJta9\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
     "ESTILO: Respuestas cortas y persuasivas, máximo 120 palabras y dos párrafos cortos. "
     "NUNCA empieces con 'Claro' ni 'Por supuesto'. Ve al grano. "
@@ -724,7 +730,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
         8: "Fundador: CEO y fundador de Akaike. Economista con posgrado en Riesgos Financieros.",
         9: "Representantes regionales: Presencia en Centroamerica, Ecuador, Colombia y Mexico.",
         10: "Planes: Starter, Scale, Corporate, Enterprise Pro. Cada plan incluye M.A.T.I.A.S. Copilot con diferentes niveles de usuarios y capacidad.",
-        11: "Cierre: Es hora de que su compania destaque con Inteligencia Propia. Agenda oficial: https://calendar.app.google/YhY1KSgjktrRrcBb6",
+        11: "Cierre: Es hora de que su compania destaque con Inteligencia Propia. Agenda oficial: https://calendar.app.google/up2iyv5hJkJpRJta9",
     }
 
     # CONTEXTO PRIMARIO: solo si la consulta pertenece al dominio o refiere a la diapositiva.
@@ -736,7 +742,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
                         "comuníqueme", "comuniqueme", "hablar con", "llamar", "cita",
                         "agendar", "agenda", "calendario", "whatsapp"]
     if any(re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", req.message, re.IGNORECASE) for kw in contacto_keywords):
-        contact_reply = "Agenda directamente aquí:\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6"
+        contact_reply = AGENDA_CTA
         try:
             await database.log_presentation_event(
                 session_id=req.session_id,
@@ -769,8 +775,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     if es_tecnico:
         tecnico_reply = (
             "Ese detalle lo diseñamos a la medida de tu operación, así que prefiero mostrártelo "
-            "en una reunión donde revisamos tu caso concreto y lo que más te conviene. Agenda aquí:\n"
-            "https://calendar.app.google/YhY1KSgjktrRrcBb6"
+            "en una reunión donde revisamos tu caso concreto. " + AGENDA_CTA
         )
         try:
             await database.log_presentation_event(
@@ -803,7 +808,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
 
     if not full_context.strip():
         return PresentacionResponse(
-            reply="Con las fuentes públicas cargadas no tengo evidencia suficiente para responderlo con rigor.\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6",
+            reply="Con las fuentes públicas cargadas no tengo evidencia suficiente para responderlo con rigor.\n" + AGENDA_URL,
             session_id=req.session_id,
             source="sin_fuente",
         )
@@ -812,7 +817,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not api_key:
         return PresentacionResponse(
-            reply="Servicio no disponible.\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6",
+            reply="Servicio no disponible.\n" + AGENDA_URL,
             session_id=req.session_id,
             source="sin_fuente",
         )
@@ -840,14 +845,14 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
             data = r.json()
             reply = data["choices"][0]["message"]["content"]
     except Exception:
-        reply = "No pude procesar tu consulta en este momento.\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6"
+        reply = "No pude procesar tu consulta en este momento.\n" + AGENDA_URL
         response_source = "sin_fuente"
 
     reply = _sanitize_public_reply(reply)
 
-    # CONVERSIÓN: toda respuesta sustantiva cierra con la llamada a agendar.
-    if response_source in {"grafo_publico", "diapositiva"} and "calendar.app.google" not in reply:
-        reply = reply.rstrip() + "\n\n¿Lo vemos a fondo para tu caso? Agenda aquí:\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6"
+    # CONVERSIÓN: toda respuesta sustantiva cierra siempre con la llamada a agendar.
+    if response_source in {"grafo_publico", "diapositiva"} and AGENDA_URL not in reply:
+        reply = reply.rstrip() + "\n\n" + AGENDA_CTA
 
     # Registrar pregunta en BD
     await database.log_presentation_event(

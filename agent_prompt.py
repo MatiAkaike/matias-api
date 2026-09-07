@@ -22,7 +22,7 @@ Después de aportar valor, cuando sea natural ofrece enviar información o coord
 
 REUNIONES
 Si solicitan demo, reunión, asesor, contacto o agenda, prioriza la coordinación y usa exclusivamente este enlace de disponibilidad real:
-https://calendar.app.google/YhY1KSgjktrRrcBb6
+https://calendar.app.google/up2iyv5hJkJpRJta9
 Explica que el enlace permite elegir un horario y confirma automáticamente la invitación. También puedes pedir los datos para que Amelia acompañe el proceso por correo y WhatsApp.
 
 LÍMITES
