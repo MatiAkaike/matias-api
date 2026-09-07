@@ -672,7 +672,7 @@ Configura IP whitelisting desde el panel administrativo.
 M.A.T.I.A.S. API v1   ·   Akaike Credit Risk Solutions 
 Documento confidencial — Akaike CRS   ·   Página 15 de 18 
 curl -X POST https://api.akaike.co/matias/v1/evaluations \ 
-  -H "X-Akaike-Api-Key: ak_live_xxxxxxxxxxxxxxxx" \ 
+  -H "X-Akaike-api-key: [secreto omitido]" \
   -H "Content-Type: application/json" \ 
   -H "X-Request-ID: req-$(uuidgen)" \ 
   -d @evaluation_request.json 
@@ -742,7 +742,7 @@ import axios from "axios";
 import { v4 as uuidv4 } from "uuid"; 
  
 const API_BASE = "https://api.akaike.co/matias/v1"; 
-const API_KEY = process.env.AKAIKE_API_KEY!; 
+const apiKey = "[secreto omitido]";
  
 interface EvaluationResult { 
   evaluation_id: string; 

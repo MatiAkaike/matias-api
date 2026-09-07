@@ -241,6 +241,8 @@ async def protect_sensitive_routes(request: Request, call_next):
     client_ip = _get_client_ip(request)
     rate_limits = {
         "/api/chat": (20, "chat"),
+        "/api/presentacion": (20, "presentacion"),
+        "/api/presentacion/event": (120, "presentacion_event"),
         "/api/session/new": (30, "session"),
         "/api/analytics/pageview": (120, "analytics"),
         "/api/analytics/event": (120, "analytics"),
@@ -277,6 +279,7 @@ async def protect_sensitive_routes(request: Request, call_next):
 app.add_middleware(
     CORSMiddleware,
     allow_origins=ALLOWED_ORIGINS,
+    allow_origin_regex=r"https://([a-z0-9-]+\.)?(wixsite\.com|wixstudio\.io)$",
     allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -628,50 +631,83 @@ async def get_conversions(dias: int = 7):
 from pydantic import BaseModel as PydanticBase
 
 class PresentacionRequest(PydanticBase):
-    message: str
-    session_id: str = "presentacion"
-    name: str = "Invitado"
-    slide: int = -1  # índice de diapositiva actual (0-based)
+    message: str = Field(min_length=1, max_length=2000)
+    session_id: str = Field(default="presentacion", max_length=100)
+    name: str = Field(default="Invitado", max_length=100)
+    slide: int = Field(default=-1, ge=-1, le=50)  # índice de diapositiva actual (0-based)
 
 class PresentacionResponse(PydanticBase):
     reply: str
     session_id: str
     source: str = "conocimiento_interno"
+    sources: list[str] = Field(default_factory=list)
 
 PRESENTACION_SYSTEM = (
-    "Eres el asistente virtual de Akaike Credit Risk Solutions experto en las presentaciones corporativas. "
-    "Conoces en profundidad los 37 documentos de la compañia.\n\n"
+    "Eres el asistente virtual comercial de Akaike Credit Risk Solutions. "
+    "Respondes con el grafo público de M.A.T.I.A.S. y la biblioteca Credit Risk Papers.\n\n"
     "REGLAS DE ORO:\n"
     "1. Usa TODA la informacion disponible en el contexto para responder con sustancia.\n"
     "2. Si hay [DIAPOSITIVA ACTUAL], conecta tu respuesta con ella.\n"
     "3. NUNCA digas 'no se detalla' o 'solo menciona'. EXPLICA con lo que tengas.\n"
     "4. PROHIBIDO inferir o inventar. Solo datos textuales.\n"
-    "5. ZERO-PII.\n"
-    "6. Si no hay respuesta: 'Agenda con Oscar Gutierrez, CEO: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
+    "5. ZERO-PII: nunca nombres de autores, clientes, empresas terceras, asistentes ni personas naturales.\n"
+    "6. Si no hay respuesta: ofrece únicamente https://calendar.app.google/YhY1KSgjktrRrcBb6\n"
     "7. Si piden asesor o demo: 'Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
     "ESTILO: Respuestas ultra concisas. NUNCA empieces con 'Claro', 'Por supuesto'. "
-    "Ve directo al punto. NUNCA uses markdown ni HTML. "
+    "Ve directo al punto. Máximo 120 palabras y dos párrafos cortos; termina siempre la última frase. "
+    "Cada afirmación factual debe estar textual y verificablemente soportada por el contexto. "
+    "No atribuyas a Akaike prácticas, usos o resultados cuando el soporte provenga únicamente de una FUENTE TEORÍA. "
+    "NUNCA uses markdown ni HTML. "
     "Las URLs en su propia linea.\n"
 )
 
-@app.options("/api/presentacion")
-async def presentacion_preflight():
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Max-Age": "600",
-        }
-    )
+PUBLIC_BLOCKED_NAMES = (
+    "Amazon Web Services", "AWS", "MassChallenge", "StartupAndes", "Colombia Fintech",
+    "DataCrédito", "Datacredito", "Experian", "TransUnion", "Claro", "Upstart",
+)
 
+
+def _sanitize_public_reply(text: str) -> str:
+    """Última barrera determinística para el widget público."""
+    clean = re.sub(r"<[^>]+>", "", text or "")
+    clean = clean.replace("**", "").replace("__", "")
+    clean = re.sub(r"\b[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}\b", "[correo omitido]", clean)
+    clean = re.sub(r"(?<!\d)(?:\+?\d[\d\s().-]{7,}\d)(?!\d)", "[teléfono omitido]", clean)
+    for name in PUBLIC_BLOCKED_NAMES:
+        clean = re.sub(
+            r"(?<![A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9])" + re.escape(name) + r"(?![A-Za-zÁÉÍÓÚÜÑáéíóúüñ0-9])",
+            "una fuente autorizada",
+            clean,
+            flags=re.IGNORECASE,
+        )
+    clean = re.sub(r"(?i)Fuente\s*:\s*[^.\n]{3,120}", "Fuente: Credit Risk Papers", clean)
+    clean = re.sub(
+        r"\b(?:[Ss]egún|[Aa]utor(?:a|es)?|[Tt]rabajo(?: aplicado)? de)\s+"
+        r"[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]+(?:\s+[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÜÑáéíóúüñ'-]+){1,3}",
+        "según la fuente",
+        clean,
+    )
+    paragraphs = [part.strip() for part in re.split(r"\n\s*\n", clean) if part.strip()][:2]
+    limited: list[str] = []
+    word_count = 0
+    for paragraph in paragraphs:
+        accepted: list[str] = []
+        for sentence in re.split(r"(?<=[.!?])\s+", paragraph):
+            sentence_words = sentence.split()
+            if word_count + len(sentence_words) > 120:
+                break
+            accepted.append(sentence)
+            word_count += len(sentence_words)
+        if accepted:
+            limited.append(" ".join(accepted))
+    if not limited and paragraphs:
+        limited = [" ".join(paragraphs[0].split()[:120]).rstrip(".,;:") + "."]
+    return "\n\n".join(limited).strip()
 
 @app.post("/api/presentacion")
 async def presentacion_chat(req: PresentacionRequest, response: Response, request: Request):
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    import knowledge_base
+    import oscar_graph_runtime
 
     # Extraer IP
     client_ip = _get_client_ip(request)
@@ -680,57 +716,74 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     # Texto de cada diapositiva
     slides = {
         0: "Portada: Akaike Credit Risk Solutions. Inteligencia Artificial para credito, entrenada con sus datos. www.akaike.co",
-        1: "El Impacto: aumento en la tasa de aprobacion con modelos de IA. reduccion en la tasa de morosidad. Fuente: Informe de Impacto de IA en Credito - Upstart vs. grandes bancos de EE.UU., Reporte SEC 2024.",
-        2: "Nosotros: Somos expertos en el desarrollo de modelos de Riesgo de Credito con IA. Optimizamos la cartera, reducimos la morosidad y mejoramos la rentabilidad de entidades en distintos sectores. Reconocidos por StartupAndes, AWS, MassChallenge, Colombia Fintech.",
-        3: "El Problema: de las perdidas por mora se atribuye a una mala evaluacion de riesgo crediticio. Por eso nuestros modelos se entrenan con los datos de la cartera. Fuente: Van Gestel & Baesens - Credit Risk Management: Basic Concepts, 2009. Grafo neuronal vivo.",
+        1: "El Impacto: aumento en la tasa de aprobacion con modelos de IA y reduccion en la tasa de morosidad. Fuente: material autorizado de la presentación.",
+        2: "Nosotros: Somos expertos en el desarrollo de modelos de Riesgo de Credito con IA. Optimizamos la cartera, reducimos la morosidad y mejoramos la rentabilidad de entidades en distintos sectores.",
+        3: "El Problema: las perdidas por mora se relacionan con una mala evaluacion de riesgo crediticio. Por eso nuestros modelos se entrenan con los datos de la cartera. Fuente: Credit Risk Papers.",
         4: "La Solucion: Una metodologia en cinco pasos. Incremento esperado del ROI: 5:1. PASO 1 - Analisis forense de la informacion: entender que datos tiene la entidad y como se toman las decisiones hoy. PASO 2 - Curacion y transformacion de datos: limpiar, unificar y preparar las fuentes internas y externas. PASO 3 - Ingenieria de variables: crear variables predictivas con poder discriminante real. PASO 4 - Entrenamiento del modelo: la IA aprende patrones de riesgo de los datos historicos. PASO 5 - Implementacion y monitoreo: el modelo se despliega en produccion con seguimiento continuo. Esta metodologia se ha refinado durante 19 anos de experiencia con mas de 250 proyectos en 16 entidades.",
-        5: "El Producto - M.A.T.I.A.S.: Modelo Analitico Transformador en Inteligencias Artificiales Scoring. Un API de decision que recibe parametros del cliente, consulta fuentes y responde aprobado o rechazado. Consume Datacredito/Experian, TransUnion, Claro, Parafiscales, entre otros. IMPORTANTE: las calificaciones del modelo NO incluyen el costo de la consulta a Datacredito ni a centrales de riesgo. Cada entidad debe tener su propio contrato con el buro de credito.",
+        5: "El Producto - M.A.T.I.A.S.: Modelo Analitico Transformador en Inteligencias Artificiales Scoring. Un API de decision que recibe parametros del cliente, consulta fuentes autorizadas y responde aprobado o rechazado. Las calificaciones del modelo no incluyen el costo de consultas a centrales de riesgo. Cada entidad debe tener su propio contrato con el buro de credito.",
         6: "Capacidades: Una IA, multiples posibilidades. M.A.T.I.A.S. se entrena para originacion, comportamiento, cobranza y analisis conversacional. Credit Scoring, Behaviour Scoring, Collection Scoring, Copilot.",
         7: "Experiencia: +250 modelos y proyectos, 16+ entidades aliadas. Implementacion de software para credito y Credit Scoring personalizado.",
-        8: "Fundador: Oscar Gutierrez M., CEO y Fundador. Economista con posgrado en Riesgos Financieros. oscar@akaike.co",
-        9: "Representantes regionales: Presencia en Centroamerica, Ecuador, Colombia y Mexico. Javier Hidalgo, Ingrid Restrepo, Carlos Rodriguez.",
+        8: "Fundador: CEO y fundador de Akaike. Economista con posgrado en Riesgos Financieros.",
+        9: "Representantes regionales: Presencia en Centroamerica, Ecuador, Colombia y Mexico.",
         10: "Planes: Starter, Scale, Corporate, Enterprise Pro. Cada plan incluye M.A.T.I.A.S. Copilot con diferentes niveles de usuarios y capacidad.",
-        11: "Cierre: Es hora de que su compania destaque con Inteligencia Propia. Contacto: Oscar Gutierrez, +57 313 412 4795, oscar@akaike.co",
+        11: "Cierre: Es hora de que su compania destaque con Inteligencia Propia. Agenda oficial: https://calendar.app.google/YhY1KSgjktrRrcBb6",
     }
 
-    # CONTEXTO PRIMARIO: texto de la diapositiva actual
-    slide_text = slides.get(req.slide, "")
+    # CONTEXTO PRIMARIO: solo si la consulta pertenece al dominio o refiere a la diapositiva.
+    slide_allowed = oscar_graph_runtime.is_domain_question(req.message) or oscar_graph_runtime.is_slide_followup(req.message)
+    slide_text = slides.get(req.slide, "") if slide_allowed else ""
     
     # DETECCIÓN DE CONTACTO: responder directo sin LLM
     contacto_keywords = ["asesor", "demo", "reunión", "reunion", "contacto", "contactar",
                         "comuníqueme", "comuniqueme", "hablar con", "llamar", "cita",
                         "agendar", "agenda", "calendario", "whatsapp"]
-    if any(kw in req.message.lower() for kw in contacto_keywords):
+    if any(re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", req.message, re.IGNORECASE) for kw in contacto_keywords):
+        contact_reply = "Agenda directamente aquí:\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6"
+        try:
+            await database.log_presentation_event(
+                session_id=req.session_id,
+                event_type="question",
+                slide=req.slide if req.slide >= 0 else None,
+                data={"question": req.message, "reply": contact_reply},
+                ip=client_ip,
+                user_agent=client_ua,
+            )
+        except Exception:
+            pass
         return PresentacionResponse(
-            reply="Agenda directamente con Oscar Gutierrez, CEO de Akaike: https://calendar.app.google/YhY1KSgjktrRrcBb6",
+            reply=contact_reply,
             session_id=req.session_id,
+            source="agenda",
         )
     if slide_text:
         slide_context = f"[DIAPOSITIVA ACTUAL - texto visible]\n{slide_text}\n[/DIAPOSITIVA ACTUAL]\n\n"
     else:
         slide_context = ""
 
-    # CONTEXTO SECUNDARIO: knowledge base
-    kb_context = knowledge_base.search_relevant(req.message, req.slide, max_chars=8000)
+    # CONTEXTO SECUNDARIO: grafo público autorizado
+    graph_context, graph_sources = oscar_graph_runtime.search(req.message, max_chars=9000)
 
     full_context = slide_context
-    if kb_context:
-        full_context += f"[CONTEXTO ADICIONAL]\n{kb_context}\n[/CONTEXTO ADICIONAL]"
+    if graph_context:
+        full_context += f"\n[GRAFO PÚBLICO CON PROCEDENCIA]\n{graph_context}\n[/GRAFO PÚBLICO CON PROCEDENCIA]"
 
     if not full_context.strip():
         return PresentacionResponse(
-            reply="Esa información no está en la presentación. Contactá a Oscar Gutiérrez, CEO de Akaike: 📧 oscar@akaike.co | 📱 +57 313 412 4795 | 📅 https://calendar.app.google/YhY1KSgjktrRrcBb6",
+            reply="Con las fuentes públicas cargadas no tengo evidencia suficiente para responderlo con rigor.\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6",
             session_id=req.session_id,
+            source="sin_fuente",
         )
 
     # Llamar a DeepSeek
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not api_key:
         return PresentacionResponse(
-            reply="Servicio no disponible. Contactá a Oscar: 📧 oscar@akaike.co | 📱 +57 313 412 4795",
+            reply="Servicio no disponible.\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6",
             session_id=req.session_id,
+            source="sin_fuente",
         )
 
+    response_source = "grafo_publico" if graph_context else "diapositiva"
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(
@@ -742,17 +795,21 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
                 json={
                     "model": "deepseek-chat",
                     "messages": [
-                        {"role": "system", "content": PRESENTACION_SYSTEM},
+                        {"role": "system", "content": PRESENTACION_SYSTEM + "\n\n" + oscar_graph_runtime.style_prompt()},
                         {"role": "user", "content": f"{full_context}\n\nPREGUNTA DEL USUARIO: {req.message}"},
                     ],
-                    "temperature": 0.3,
+                    "temperature": 0.1,
                     "max_tokens": 200,
                 },
             )
+            r.raise_for_status()
             data = r.json()
             reply = data["choices"][0]["message"]["content"]
     except Exception:
-        reply = "No pude procesar tu consulta en este momento. Contactá a Oscar Gutiérrez:\n📧 oscar@akaike.co | 📱 +57 313 412 4795\n📅 https://calendar.app.google/YhY1KSgjktrRrcBb6"
+        reply = "No pude procesar tu consulta en este momento.\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6"
+        response_source = "sin_fuente"
+
+    reply = _sanitize_public_reply(reply)
 
     # Registrar pregunta en BD
     await database.log_presentation_event(
@@ -764,7 +821,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
         user_agent=client_ua,
     )
 
-    return PresentacionResponse(reply=reply, session_id=req.session_id)
+    return PresentacionResponse(reply=reply, session_id=req.session_id, source=response_source, sources=graph_sources[:5])
 
 
 # ─── Eventos de presentación ──────────────────────────────────────────────
@@ -798,19 +855,6 @@ async def presentacion_event(req: PresentacionEvent, request: Request):
         user_agent=ua,
     )
     return {"ok": True}
-
-@app.options("/api/presentacion/event")
-async def presentacion_event_preflight():
-    return Response(
-        status_code=200,
-        headers={
-            "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type",
-            "Access-Control-Max-Age": "600",
-        }
-    )
-
 
 # ─── Stats de presentación ────────────────────────────────────────────────
 

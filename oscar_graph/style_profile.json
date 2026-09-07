@@ -1,0 +1,239 @@
+{
+  "version": 1,
+  "generated_at": "2026-09-07T19:30:34.691662+00:00",
+  "scope": "estilo oral de Oscar; nunca fuente factual",
+  "statistics": {
+    "meetings": 201,
+    "utterances_total": 84878,
+    "oscar_utterances": 51760,
+    "oscar_words": 854437,
+    "vocabulary": 20164,
+    "unique_bigrams": 211464,
+    "unique_trigrams": 524294,
+    "verb_surface_forms": 11894,
+    "average_utterance_words": 16.51
+  },
+  "top_words": [],
+  "top_bigrams": [],
+  "top_trigrams": [],
+  "discourse_markers": [
+    {
+      "text": "entonces",
+      "count": 5978
+    },
+    {
+      "text": "digamos",
+      "count": 2953
+    },
+    {
+      "text": "bueno",
+      "count": 2685
+    },
+    {
+      "text": "básicamente",
+      "count": 998
+    },
+    {
+      "text": "por ejemplo",
+      "count": 918
+    },
+    {
+      "text": "mira",
+      "count": 821
+    },
+    {
+      "text": "listo",
+      "count": 778
+    },
+    {
+      "text": "yo creo",
+      "count": 766
+    },
+    {
+      "text": "realmente",
+      "count": 323
+    },
+    {
+      "text": "perfecto",
+      "count": 296
+    },
+    {
+      "text": "exactamente",
+      "count": 251
+    },
+    {
+      "text": "es decir",
+      "count": 210
+    },
+    {
+      "text": "la idea es",
+      "count": 102
+    },
+    {
+      "text": "lo que pasa es que",
+      "count": 99
+    },
+    {
+      "text": "correcto",
+      "count": 76
+    },
+    {
+      "text": "el punto es",
+      "count": 68
+    },
+    {
+      "text": "para mí",
+      "count": 54
+    },
+    {
+      "text": "lo importante es",
+      "count": 50
+    },
+    {
+      "text": "finalmente",
+      "count": 30
+    },
+    {
+      "text": "de alguna manera",
+      "count": 21
+    },
+    {
+      "text": "para mi",
+      "count": 10
+    },
+    {
+      "text": "en ese sentido",
+      "count": 3
+    }
+  ],
+  "verb_surface_forms": [],
+  "conjugation_profile": [
+    {
+      "ending": "o",
+      "count": 111058
+    },
+    {
+      "ending": "as",
+      "count": 20377
+    },
+    {
+      "ending": "a",
+      "count": 71318
+    },
+    {
+      "ending": "amos",
+      "count": 9204
+    },
+    {
+      "ending": "an",
+      "count": 5687
+    },
+    {
+      "ending": "é",
+      "count": 1399
+    },
+    {
+      "ending": "aste",
+      "count": 227
+    },
+    {
+      "ending": "ó",
+      "count": 2164
+    },
+    {
+      "ending": "aron",
+      "count": 490
+    },
+    {
+      "ending": "ía",
+      "count": 4423
+    },
+    {
+      "ending": "ías",
+      "count": 4086
+    },
+    {
+      "ending": "íamos",
+      "count": 429
+    },
+    {
+      "ending": "ían",
+      "count": 438
+    },
+    {
+      "ending": "aré",
+      "count": 82
+    },
+    {
+      "ending": "arás",
+      "count": 9
+    },
+    {
+      "ending": "ará",
+      "count": 48
+    },
+    {
+      "ending": "aremos",
+      "count": 32
+    },
+    {
+      "ending": "arán",
+      "count": 23
+    },
+    {
+      "ending": "ería",
+      "count": 614
+    },
+    {
+      "ending": "erías",
+      "count": 35
+    },
+    {
+      "ending": "eríamos",
+      "count": 13
+    },
+    {
+      "ending": "erían",
+      "count": 71
+    },
+    {
+      "ending": "iendo",
+      "count": 3370
+    },
+    {
+      "ending": "ando",
+      "count": 6116
+    },
+    {
+      "ending": "ado",
+      "count": 6015
+    },
+    {
+      "ending": "ido",
+      "count": 2281
+    },
+    {
+      "ending": "emos",
+      "count": 4405
+    },
+    {
+      "ending": "imos",
+      "count": 1120
+    },
+    {
+      "ending": "es",
+      "count": 31541
+    },
+    {
+      "ending": "en",
+      "count": 9319
+    }
+  ],
+  "voice_rules": [
+    "Responder en español conversacional, directo y pedagógico.",
+    "Empezar por la idea central y luego explicar el porqué con un ejemplo aplicado.",
+    "Usar marcadores reales de Oscar solo cuando encajen; no convertirlos en muletillas artificiales.",
+    "No atribuir a Oscar frases literales que no estén en el corpus.",
+    "La voz define forma; los hechos salen exclusivamente de fuentes públicas autorizadas con procedencia."
+  ]
+}
