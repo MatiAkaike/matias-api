@@ -33,7 +33,7 @@ class LeadExtractionTests(unittest.TestCase):
 
 class AgentConfigurationTests(unittest.TestCase):
     def test_prompt_uses_canonical_calendar_and_hides_prices(self):
-        self.assertIn("https://calendar.app.google/YhY1KSgjktrRrcBb6", SYSTEM_PROMPT)
+        self.assertIn("https://calendar.app.google/up2iyv5hJkJpRJta9", SYSTEM_PROMPT)
         self.assertIn("No reveles precios", SYSTEM_PROMPT)
 
     def test_tracked_runtime_files_do_not_contain_known_secret_defaults(self):
