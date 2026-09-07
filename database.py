@@ -395,8 +395,8 @@ async def get_analytics_dashboard():
 
 # ── Presentation events ───────────────────────────────────────────────
 
-async def log_presentation_event(session_id: str, event_type: str, slide: int = None,
-                                  data: dict = None, ip: str = None, user_agent: str = None):
+async def log_presentation_event(session_id: str, event_type: str, slide: int | None = None,
+                                  data: dict | None = None, ip: str | None = None, user_agent: str | None = None):
     """Registra un evento de la presentación en PostgreSQL."""
     pool = await _get_pg_pool()
     if pool:
