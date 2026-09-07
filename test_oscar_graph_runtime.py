@@ -78,7 +78,8 @@ def test_endpoint_se_abstiene_fuera_del_dominio_y_valida_tamano():
     )
     assert response.status_code == 200
     assert response.json()["source"] == "sin_fuente"
-    assert "evidencia suficiente" in response.json()["reply"]
+    assert "riesgo de crédito" in response.json()["reply"]
+    assert "calendar.app.google" in response.json()["reply"]
     oversized = client.post(
         "/api/presentacion",
         json={"message": "x" * 2001, "session_id": "qa", "slide": -1},
