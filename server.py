@@ -845,6 +845,10 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
 
     reply = _sanitize_public_reply(reply)
 
+    # CONVERSIÓN: toda respuesta sustantiva cierra con la llamada a agendar.
+    if response_source in {"grafo_publico", "diapositiva"} and "calendar.app.google" not in reply:
+        reply = reply.rstrip() + "\n\n¿Lo vemos a fondo para tu caso? Agenda aquí:\nhttps://calendar.app.google/YhY1KSgjktrRrcBb6"
+
     # Registrar pregunta en BD
     await database.log_presentation_event(
         session_id=req.session_id,
