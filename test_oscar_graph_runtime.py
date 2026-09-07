@@ -106,3 +106,26 @@ def test_cors_presentacion_permite_akaike_y_rechaza_origen_externo():
     assert allowed.status_code == 200
     assert allowed.headers["access-control-allow-origin"] == "https://akaike.lat"
     assert blocked.status_code == 400
+
+
+def test_profundizacion_tecnica_redirige_a_agenda_sin_detalles():
+    client = TestClient(server.app)
+    response = client.post(
+        "/api/presentacion",
+        json={"message": "dime paso a paso como debo construirlo", "session_id": "qa-tec", "slide": -1},
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["source"] == "agenda"
+    assert "calendar.app.google" in body["reply"]
+    assert "GINI" not in body["reply"] and "PD" not in body["reply"]
+
+
+def test_pregunta_comercial_no_dispara_redireccion_tecnica():
+    client = TestClient(server.app)
+    response = client.post(
+        "/api/presentacion",
+        json={"message": "¿Cómo funciona M.A.T.I.A.S.?", "session_id": "qa-com", "slide": -1},
+    )
+    assert response.status_code == 200
+    assert response.json()["source"] != "agenda"

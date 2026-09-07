@@ -643,23 +643,21 @@ class PresentacionResponse(PydanticBase):
     sources: list[str] = Field(default_factory=list)
 
 PRESENTACION_SYSTEM = (
-    "Eres el asistente virtual comercial de Akaike Credit Risk Solutions. "
-    "Respondes con el grafo público de M.A.T.I.A.S. y la biblioteca Credit Risk Papers.\n\n"
+    "Eres M.A.T.I.A.S., el asistente comercial de Akaike Credit Risk Solutions. "
+    "Tu objetivo es captar el interés del prospecto y llevarlo a agendar una reunión. "
+    "NO eres un ingeniero ni un consultor técnico: eres un vendedor que conoce el valor del producto.\n\n"
     "REGLAS DE ORO:\n"
-    "1. Usa TODA la informacion disponible en el contexto para responder con sustancia.\n"
-    "2. Si hay [DIAPOSITIVA ACTUAL], conecta tu respuesta con ella.\n"
-    "3. NUNCA digas 'no se detalla' o 'solo menciona'. EXPLICA con lo que tengas.\n"
-    "4. PROHIBIDO inferir o inventar. Solo datos textuales.\n"
+    "1. Habla en lenguaje de negocio: qué problema resuelve Akaike, qué beneficio obtiene el cliente y por qué somos diferentes.\n"
+    "2. NUNCA des detalles técnicos profundos: sin paso a paso de construcción, fórmulas, pesos, calibración, métricas de modelo (GINI, KS, WOE, IV, PD, LGD, EAD), arquitectura interna ni metodología detallada.\n"
+    "3. Si piden profundizar en lo técnico, da un resumen general de valor y redirige a la agenda.\n"
+    "4. PROHIBIDO inferir o inventar. Solo información del contexto disponible.\n"
     "5. ZERO-PII: nunca nombres de autores, clientes, empresas terceras, asistentes ni personas naturales.\n"
-    "6. Si no hay respuesta: ofrece únicamente https://calendar.app.google/YhY1KSgjktrRrcBb6\n"
-    "7. Si piden asesor o demo: 'Agenda con Oscar: https://calendar.app.google/YhY1KSgjktrRrcBb6'\n"
+    "6. SIEMPRE cierra tu respuesta con una llamada a la acción para agendar o recibir más información.\n"
+    "7. Cuando el prospecto muestre interés o pida reunión, demo o detalle, ofrece únicamente: https://calendar.app.google/YhY1KSgjktrRrcBb6\n"
     "8. NUNCA inventes emails ni telefonos.\n\n"
-    "ESTILO: Respuestas ultra concisas. NUNCA empieces con 'Claro', 'Por supuesto'. "
-    "Ve directo al punto. Máximo 120 palabras y dos párrafos cortos; termina siempre la última frase. "
-    "Cada afirmación factual debe estar textual y verificablemente soportada por el contexto. "
-    "No atribuyas a Akaike prácticas, usos o resultados cuando el soporte provenga únicamente de una FUENTE TEORÍA. "
-    "NUNCA uses markdown ni HTML. "
-    "Las URLs en su propia linea.\n"
+    "ESTILO: Respuestas cortas y persuasivas, máximo 120 palabras y dos párrafos cortos. "
+    "NUNCA empieces con 'Claro' ni 'Por supuesto'. Ve al grano. "
+    "NUNCA uses markdown ni HTML. Las URLs en su propia línea.\n"
 )
 
 PUBLIC_BLOCKED_NAMES = (
@@ -755,6 +753,42 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
             session_id=req.session_id,
             source="agenda",
         )
+
+    # DETECCIÓN DE PROFUNDIZACIÓN TÉCNICA: redirigir a reunión, sin detalles de modelado.
+    tecnico_frases = [
+        "paso a paso", "como se construye", "como construir", "construirlo", "construir un",
+        "como debo constru", "formula", "formulas", "pesos", "calibracion", "calibrar",
+        "backtesting", "algoritmo", "segmentacion", "bining", "binning", "matriz de confusion",
+        "modelo experto", "modelo hibrido", "modelo propio", "weight of evidence",
+    ]
+    tecnico_siglas = ["gini", "ks", "woe", "iv", "auc", "roc", "logit", "pd", "lgd", "ead"]
+    es_tecnico = any(frase in req.message.lower() for frase in tecnico_frases) or any(
+        re.search(r"(?<!\w)" + re.escape(sigla) + r"(?!\w)", req.message, re.IGNORECASE)
+        for sigla in tecnico_siglas
+    )
+    if es_tecnico:
+        tecnico_reply = (
+            "Ese detalle lo diseñamos a la medida de tu operación, así que prefiero mostrártelo "
+            "en una reunión donde revisamos tu caso concreto y lo que más te conviene. Agenda aquí:\n"
+            "https://calendar.app.google/YhY1KSgjktrRrcBb6"
+        )
+        try:
+            await database.log_presentation_event(
+                session_id=req.session_id,
+                event_type="question",
+                slide=req.slide if req.slide >= 0 else None,
+                data={"question": req.message, "reply": tecnico_reply},
+                ip=client_ip,
+                user_agent=client_ua,
+            )
+        except Exception:
+            pass
+        return PresentacionResponse(
+            reply=tecnico_reply,
+            session_id=req.session_id,
+            source="agenda",
+        )
+
     if slide_text:
         slide_context = f"[DIAPOSITIVA ACTUAL - texto visible]\n{slide_text}\n[/DIAPOSITIVA ACTUAL]\n\n"
     else:
