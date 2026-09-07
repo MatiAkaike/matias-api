@@ -129,3 +129,26 @@ def test_pregunta_comercial_no_dispara_redireccion_tecnica():
     )
     assert response.status_code == 200
     assert response.json()["source"] != "agenda"
+
+
+def test_cuota_de_chat_se_agota_tras_10_mensajes():
+    client = TestClient(server.app)
+    with server._chat_quota_lock:
+        server._chat_quota.clear()
+    server.rate_tracker.clear()
+    for i in range(10):
+        response = client.post(
+            "/api/presentacion",
+            json={"message": f"mensaje {i}", "session_id": "quota", "slide": -1},
+        )
+        assert response.status_code == 200
+        assert response.json()["source"] != "cuota"
+    agotado = client.post(
+        "/api/presentacion",
+        json={"message": "mensaje 11", "session_id": "quota", "slide": -1},
+    )
+    assert agotado.status_code == 200
+    body = agotado.json()
+    assert body["source"] == "cuota"
+    assert "cuota" in body["reply"].lower()
+    assert "calendar.app.google" in body["reply"]
