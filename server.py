@@ -72,6 +72,27 @@ ip_tracker_lock = threading.Lock()
 rate_tracker: dict[tuple[str, str], deque[float]] = {}
 rate_tracker_lock = threading.Lock()
 
+CHAT_QUOTA_LIMIT = 10
+CHAT_QUOTA_WINDOW = 24 * 3600  # segundos antes de resetear la cuota por IP
+_chat_quota: dict[str, tuple[int, float]] = {}
+_chat_quota_lock = threading.Lock()
+
+
+def _consume_chat_quota(ip: str) -> bool:
+    """Devuelve True si aún queda cuota de chat para la IP; consume un turno."""
+    if not ip or ip == "unknown":
+        return True
+    now = time.time()
+    with _chat_quota_lock:
+        count, last_seen = _chat_quota.get(ip, (0, now))
+        if now - last_seen > CHAT_QUOTA_WINDOW:
+            count = 0
+        if count >= CHAT_QUOTA_LIMIT:
+            return False
+        _chat_quota[ip] = (count + 1, now)
+        return True
+
+
 def _get_client_ip(request: Request) -> str:
     """Usa la IP normalizada por Uvicorn; solo recurre a XFF desde proxy privado."""
     peer = request.client.host if request.client else ""
@@ -208,6 +229,13 @@ def _cleanup_sessions():
         ]
         for key in stale_rate_keys:
             del rate_tracker[key]
+    with _chat_quota_lock:
+        stale_quota_ips = [
+            ip for ip, (count, last_seen) in _chat_quota.items()
+            if now - last_seen > CHAT_QUOTA_WINDOW * 2
+        ]
+        for ip in stale_quota_ips:
+            del _chat_quota[ip]
 
 
 # ─── Lifespan ────────────────────────────────────────────────────────────────
@@ -716,6 +744,14 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     # Extraer IP
     client_ip = _get_client_ip(request)
     client_ua = request.headers.get("User-Agent", "")
+
+    # LÍMITE DE CUOTA: evita conversaciones indefinidas que consumen tokens.
+    if not _consume_chat_quota(client_ip):
+        quota_reply = (
+            "Has superado tu cuota de chat de esta sesión. "
+            "Si quieres conocer más, agenda una reunión aquí:\n" + AGENDA_URL
+        )
+        return PresentacionResponse(reply=quota_reply, session_id=req.session_id, source="cuota")
 
     # Texto de cada diapositiva
     slides = {
