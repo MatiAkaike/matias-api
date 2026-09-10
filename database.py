@@ -34,6 +34,8 @@ def _build_dsn():
 async def _get_pg_pool():
     global _pg_pool
     dsn = _build_dsn()
+    if _pg_pool is not None and getattr(_pg_pool, "_closed", False):
+        _pg_pool = None
     if _pg_pool is None and dsn:
         async with _pg_lock:
             if _pg_pool is None:
@@ -45,6 +47,24 @@ async def _get_pg_pool():
                     statement_cache_size=0,
                 )
     return _pg_pool
+
+
+async def _run_pg_write(operation, attempts: int = 3) -> bool:
+    """Ejecuta una escritura crítica con reintentos breves."""
+    last_error = None
+    for attempt in range(attempts):
+        try:
+            pool = await _get_pg_pool()
+            if not pool:
+                return False
+            async with pool.acquire() as conn:
+                await operation(conn)
+            return True
+        except Exception as exc:
+            last_error = exc
+            if attempt < attempts - 1:
+                await asyncio.sleep(0.25 * (2**attempt))
+    raise last_error
 
 
 async def _init_pg():
@@ -126,6 +146,18 @@ async def _init_sqlite():
                 message_count INTEGER DEFAULT 0
             )
         """)
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS presentation_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                slide INTEGER,
+                data TEXT DEFAULT '{}',
+                ip TEXT,
+                user_agent TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """)
         # ── Analytics tables ──────────────────────────────────────────
         await db.execute("""
             CREATE TABLE IF NOT EXISTS page_views (
@@ -201,45 +233,50 @@ async def close_db():
 
 # ── Chat operations ──────────────────────────────────────────────────
 
-async def log_interaction(session_id: str, role: str, content: str, model: str = None, source: str = "web"):
-    try:
-        now = datetime.now(timezone.utc)
-        pool = await _get_pg_pool()
-        if pool:
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    "INSERT INTO chat_interactions (session_id, role, content, timestamp, model, source) VALUES ($1, $2, $3, $4, $5, $6)",
-                    session_id, role, content, now, model, source
-                )
-                await conn.execute("""
-                    INSERT INTO chat_sessions (session_id, created_at, last_activity, message_count)
-                    VALUES ($1, $2, $2, 1)
-                    ON CONFLICT (session_id) DO UPDATE SET
-                        last_activity = $2,
-                        message_count = chat_sessions.message_count + 1
-                """, session_id, now)
-            return
-        # SQLite fallback
-        db = await _get_sqlite()
-        try:
-            now_str = now.isoformat()
-            await db.execute(
-                "INSERT INTO chat_interactions (session_id, role, content, timestamp, model, source) VALUES (?, ?, ?, ?, ?, ?)",
-                (session_id, role, content, now_str, model, source)
+async def log_interaction(
+    session_id: str,
+    role: str,
+    content: str,
+    model: str | None = None,
+    source: str = "web",
+):
+    now = datetime.now(timezone.utc)
+
+    async def write_pg(conn):
+        async with conn.transaction():
+            await conn.execute(
+                "INSERT INTO chat_interactions (session_id, role, content, timestamp, model, source) VALUES ($1, $2, $3, $4, $5, $6)",
+                session_id, role, content, now, model, source
             )
-            await db.execute("""
+            await conn.execute("""
                 INSERT INTO chat_sessions (session_id, created_at, last_activity, message_count)
-                VALUES (?, ?, ?, 1)
-                ON CONFLICT(session_id) DO UPDATE SET
-                    last_activity = excluded.last_activity,
-                    message_count = message_count + 1
-            """, (session_id, now_str, now_str))
-            await db.commit()
-        finally:
-            await db.close()
-    except Exception:
-        # El chat no responde si la interacción no quedó persistida.
-        raise
+                VALUES ($1, $2, $2, 1)
+                ON CONFLICT (session_id) DO UPDATE SET
+                    last_activity = $2,
+                    message_count = chat_sessions.message_count + 1
+            """, session_id, now)
+
+    if await _run_pg_write(write_pg):
+        return
+
+    # SQLite fallback para desarrollo local.
+    db = await _get_sqlite()
+    try:
+        now_str = now.isoformat()
+        await db.execute(
+            "INSERT INTO chat_interactions (session_id, role, content, timestamp, model, source) VALUES (?, ?, ?, ?, ?, ?)",
+            (session_id, role, content, now_str, model, source)
+        )
+        await db.execute("""
+            INSERT INTO chat_sessions (session_id, created_at, last_activity, message_count)
+            VALUES (?, ?, ?, 1)
+            ON CONFLICT(session_id) DO UPDATE SET
+                last_activity = excluded.last_activity,
+                message_count = message_count + 1
+        """, (session_id, now_str, now_str))
+        await db.commit()
+    finally:
+        await db.close()
 
 
 async def get_recent_interactions(limit: int = 50):
@@ -397,20 +434,52 @@ async def get_analytics_dashboard():
 
 async def log_presentation_event(session_id: str, event_type: str, slide: int | None = None,
                                   data: dict | None = None, ip: str | None = None, user_agent: str | None = None):
-    """Registra un evento de la presentación en PostgreSQL."""
-    pool = await _get_pg_pool()
-    if pool:
-        try:
-            import json as _json
-            async with pool.acquire() as conn:
-                await conn.execute(
-                    """INSERT INTO presentation_events (session_id, event_type, slide, data, ip, user_agent)
-                       VALUES ($1, $2, $3, $4, $5, $6)""",
-                    session_id, event_type, slide,
-                    _json.dumps(data or {}), ip, user_agent
-                )
-        except Exception:
-            pass
+    """Registra un evento crítico; no confirma éxito si PostgreSQL falla."""
+    import json as _json
+
+    async def write_pg(conn):
+        await conn.execute(
+            """INSERT INTO presentation_events (session_id, event_type, slide, data, ip, user_agent)
+               VALUES ($1, $2, $3, $4, $5, $6)""",
+            session_id, event_type, slide,
+            _json.dumps(data or {}), ip, user_agent
+        )
+
+    if await _run_pg_write(write_pg):
+        return
+
+    # SQLite fallback para desarrollo local.
+    db = await _get_sqlite()
+    try:
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS presentation_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                slide INTEGER,
+                data TEXT DEFAULT '{}',
+                ip TEXT,
+                user_agent TEXT,
+                timestamp TEXT NOT NULL
+            )
+        """)
+        await db.execute(
+            """INSERT INTO presentation_events
+               (session_id, event_type, slide, data, ip, user_agent, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                session_id,
+                event_type,
+                slide,
+                _json.dumps(data or {}),
+                ip,
+                user_agent,
+                datetime.now(timezone.utc).isoformat(),
+            ),
+        )
+        await db.commit()
+    finally:
+        await db.close()
 
 
 def empty_presentation_stats():

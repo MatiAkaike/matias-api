@@ -167,17 +167,22 @@ async def _conversation(session_id: str) -> list[dict[str, str]]:
     return [{"role": row.get("role", ""), "content": row.get("content", "")} for row in rows]
 
 
-async def save_lead(session_id: str, text: str, ip: str = "") -> dict[str, Any] | None:
+async def save_lead(
+    session_id: str,
+    text: str,
+    ip: str = "",
+    source: str = "Web - M.A.T.I.A.S.",
+) -> dict[str, Any] | None:
     """Acumula datos compartidos en varios turnos y hace upsert por sesión."""
-    pool = await database._get_pg_pool()
-    if not pool:
-        raise RuntimeError("PostgreSQL no disponible para guardar lead")
-
     conversation = await _conversation(session_id)
     full_text = "\n".join(item["content"] for item in conversation if item["role"] == "user")
     data = _extract_lead_data(full_text or text)
     if not data:
         return None
+
+    pool = await database._get_pg_pool()
+    if not pool:
+        raise RuntimeError("PostgreSQL no disponible para guardar lead")
 
     async with pool.acquire() as conn:
         payload = json.dumps(conversation, ensure_ascii=False)
@@ -186,7 +191,7 @@ async def save_lead(session_id: str, text: str, ip: str = "") -> dict[str, Any] 
             INSERT INTO leads (
                 session_id, name, company, job_title, phone, email,
                 original_message, conversation_json, source, ip, created_at, updated_at
-            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,'Web - M.A.T.I.A.S.',$9,NOW(),NOW())
+            ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,NOW(),NOW())
             ON CONFLICT (session_id) WHERE session_id IS NOT NULL DO UPDATE SET
                 name=COALESCE(EXCLUDED.name, leads.name),
                 company=COALESCE(EXCLUDED.company, leads.company),
@@ -195,6 +200,7 @@ async def save_lead(session_id: str, text: str, ip: str = "") -> dict[str, Any] 
                 email=COALESCE(EXCLUDED.email, leads.email),
                 original_message=COALESCE(leads.original_message, EXCLUDED.original_message),
                 conversation_json=EXCLUDED.conversation_json,
+                source=EXCLUDED.source,
                 ip=COALESCE(NULLIF(EXCLUDED.ip,''), leads.ip),
                 email_sent=CASE
                     WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email THEN 0
@@ -237,6 +243,7 @@ async def save_lead(session_id: str, text: str, ip: str = "") -> dict[str, Any] 
             data.get("correo"),
             text[:1000],
             payload,
+            source,
             ip,
         )
         lead = _public_lead(row)
@@ -365,10 +372,15 @@ async def get_pending_leads(limit: int = 20, claim: bool = True) -> list[dict[st
     if not pool:
         return []
     eligible = """
-        (email IS NOT NULL AND email<>'' AND email_sent IN (0,2) AND email_attempts<5)
-        OR (phone IS NOT NULL AND phone<>'' AND whatsapp_sent IN (0,2) AND whatsapp_attempts<5)
+        (email IS NOT NULL AND email<>''
+            AND (email_sent IN (0,2) OR (email_sent=3 AND updated_at < NOW() - INTERVAL '15 minutes'))
+            AND email_attempts<5)
+        OR (phone IS NOT NULL AND phone<>''
+            AND (whatsapp_sent IN (0,2) OR (whatsapp_sent=3 AND updated_at < NOW() - INTERVAL '15 minutes'))
+            AND whatsapp_attempts<5)
         OR (((email IS NOT NULL AND email<>'') OR (phone IS NOT NULL AND phone<>''))
-            AND telegram_sent IN (0,2) AND telegram_attempts<5)
+            AND (telegram_sent IN (0,2) OR (telegram_sent=3 AND updated_at < NOW() - INTERVAL '15 minutes'))
+            AND telegram_attempts<5)
     """
     async with pool.acquire() as conn:
         if not claim:
@@ -385,22 +397,28 @@ async def get_pending_leads(limit: int = 20, claim: bool = True) -> list[dict[st
                 )
                 UPDATE leads AS lead SET
                     email_attempts=CASE WHEN lead.email IS NOT NULL AND lead.email<>''
-                        AND lead.email_sent IN (0,2) AND lead.email_attempts<5
+                        AND (lead.email_sent IN (0,2) OR (lead.email_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
+                        AND lead.email_attempts<5
                         THEN lead.email_attempts+1 ELSE lead.email_attempts END,
                     email_sent=CASE WHEN lead.email IS NOT NULL AND lead.email<>''
-                        AND lead.email_sent IN (0,2) AND lead.email_attempts<5
+                        AND (lead.email_sent IN (0,2) OR (lead.email_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
+                        AND lead.email_attempts<5
                         THEN 3 ELSE lead.email_sent END,
                     whatsapp_attempts=CASE WHEN lead.phone IS NOT NULL AND lead.phone<>''
-                        AND lead.whatsapp_sent IN (0,2) AND lead.whatsapp_attempts<5
+                        AND (lead.whatsapp_sent IN (0,2) OR (lead.whatsapp_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
+                        AND lead.whatsapp_attempts<5
                         THEN lead.whatsapp_attempts+1 ELSE lead.whatsapp_attempts END,
                     whatsapp_sent=CASE WHEN lead.phone IS NOT NULL AND lead.phone<>''
-                        AND lead.whatsapp_sent IN (0,2) AND lead.whatsapp_attempts<5
+                        AND (lead.whatsapp_sent IN (0,2) OR (lead.whatsapp_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
+                        AND lead.whatsapp_attempts<5
                         THEN 3 ELSE lead.whatsapp_sent END,
                     telegram_attempts=CASE WHEN (COALESCE(lead.email,'')<>'' OR COALESCE(lead.phone,'')<>'')
-                        AND lead.telegram_sent IN (0,2) AND lead.telegram_attempts<5
+                        AND (lead.telegram_sent IN (0,2) OR (lead.telegram_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
+                        AND lead.telegram_attempts<5
                         THEN lead.telegram_attempts+1 ELSE lead.telegram_attempts END,
                     telegram_sent=CASE WHEN (COALESCE(lead.email,'')<>'' OR COALESCE(lead.phone,'')<>'')
-                        AND lead.telegram_sent IN (0,2) AND lead.telegram_attempts<5
+                        AND (lead.telegram_sent IN (0,2) OR (lead.telegram_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
+                        AND lead.telegram_attempts<5
                         THEN 3 ELSE lead.telegram_sent END,
                     updated_at=NOW()
                 FROM candidates WHERE lead.id=candidates.id
