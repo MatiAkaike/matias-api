@@ -1,5 +1,6 @@
 import unittest
 from pathlib import Path
+from unittest.mock import AsyncMock, Mock, patch
 
 import lead_service
 from agent_prompt import SYSTEM_PROMPT
@@ -42,6 +43,38 @@ class AgentConfigurationTests(unittest.TestCase):
         render = (root / "render.yaml").read_text(encoding="utf-8")
         self.assertNotRegex(server, r"TELEGRAM_BOT_TOKEN\s*=\s*os\.getenv\([^\n]+,[^\n]+:[^\n]+\)")
         self.assertIn("SUPABASE_PASSWORD\n        sync: false", render)
+
+
+class LeadPersistenceSafetyTests(unittest.IsolatedAsyncioTestCase):
+    async def test_startup_fails_when_session_ids_are_duplicated(self):
+        conn = AsyncMock()
+        conn.fetchval.return_value = 2
+
+        class Acquire:
+            async def __aenter__(self):
+                return conn
+
+            async def __aexit__(self, *_args):
+                return False
+
+        pool = Mock()
+        pool.acquire.return_value = Acquire()
+        with patch.object(lead_service.database, "_get_pg_pool", AsyncMock(return_value=pool)):
+            with self.assertRaisesRegex(RuntimeError, "session_id duplicados"):
+                await lead_service.init_leads_db()
+
+        unique_index_calls = [
+            call for call in conn.execute.await_args_list
+            if "uq_leads_session_id" in str(call)
+        ]
+        self.assertEqual(unique_index_calls, [])
+
+    def test_claims_use_independent_channel_timestamps(self):
+        source = Path(lead_service.__file__).read_text(encoding="utf-8")
+        for channel in ("email", "whatsapp", "telegram"):
+            self.assertIn(f"{channel}_claimed_at < NOW()", source)
+            self.assertIn(f"ADD COLUMN IF NOT EXISTS {channel}_claimed_at", source)
+        self.assertIn('f"{channel}_claimed_at=NULL', source)
 
 
 if __name__ == "__main__":

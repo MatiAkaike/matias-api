@@ -14,10 +14,10 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 OPENCLAW = Path("/Volumes/OpenClaw/OPENCLAW")
-DEFAULT_MATIAS_API = Path.home() / "matias-api-oscar-graph"
-MATIAS_API = Path(os.getenv("MATIAS_API_PATH", str(DEFAULT_MATIAS_API)))
 load_dotenv(OPENCLAW / ".env")
 load_dotenv(Path("/Volumes/OpenClaw/Matias Seek/config/.env"), override=False)
+DEFAULT_MATIAS_API = Path.home() / "matias-api-oscar-graph"
+MATIAS_API = Path(os.getenv("MATIAS_API_PATH", str(DEFAULT_MATIAS_API)))
 sys.path.insert(0, str(OPENCLAW))
 sys.path.insert(0, str(MATIAS_API))
 
@@ -73,14 +73,16 @@ async def _process_lead(lead: dict, dry_run: bool = False) -> dict:
     session_id = lead["session_id"]
     result = {"session_id": session_id, "email": "skip", "telegram": "skip", "whatsapp": "skip"}
 
-    if lead.get("telegram_sent") == 3:
+    if lead.get("telegram_sent") == 3 or (dry_run and lead.get("telegram_sent") in (0, 2)):
         if dry_run:
             result["telegram"] = "dry-run"
         else:
             sent = await lead_service.notify_amelia(lead, session_id)
             result["telegram"] = "sent" if sent.get("sent") else "error"
 
-    if lead.get("correo") and lead.get("email_sent") == 3:
+    if lead.get("correo") and (
+        lead.get("email_sent") == 3 or (dry_run and lead.get("email_sent") in (0, 2))
+    ):
         if dry_run:
             result["email"] = "dry-run"
         else:
@@ -99,7 +101,9 @@ async def _process_lead(lead: dict, dry_run: bool = False) -> dict:
                 result["email"] = "error"
 
     phone = _normalize_phone(lead.get("whatsapp") or "")
-    if phone and lead.get("whatsapp_sent") == 3:
+    if phone and (
+        lead.get("whatsapp_sent") == 3 or (dry_run and lead.get("whatsapp_sent") in (0, 2))
+    ):
         if dry_run:
             result["whatsapp"] = "dry-run"
         else:
