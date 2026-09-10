@@ -1,5 +1,6 @@
 """Pruebas del grafo público y la capa de voz agregada."""
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -130,6 +131,50 @@ def test_pregunta_comercial_no_dispara_redireccion_tecnica():
     )
     assert response.status_code == 200
     assert response.json()["source"] != "agenda"
+
+
+def test_turno_presentacion_persiste_chat_evento_y_lead(monkeypatch):
+    calls = []
+
+    async def fake_log_interaction(session_id, role, content, model=None, source="web"):
+        calls.append(("interaction", session_id, role, source, model, content))
+
+    async def fake_save_lead(session_id, text, ip="", source=""):
+        calls.append(("lead", session_id, source, ip, text))
+        return {"session_id": session_id}
+
+    async def fake_log_event(**kwargs):
+        calls.append(("event", kwargs))
+
+    monkeypatch.setattr(server.database, "log_interaction", fake_log_interaction)
+    monkeypatch.setattr(server.database, "log_presentation_event", fake_log_event)
+    monkeypatch.setattr(server.leads, "save_lead", fake_save_lead)
+    req = server.PresentacionRequest(
+        message="Soy Ana, mi correo es ana@example.com",
+        session_id="qa-persistencia",
+        slide=5,
+    )
+
+    result = asyncio.run(
+        server._persist_presentation_turn(
+            req,
+            "Respuesta verificada",
+            "grafo_publico",
+            "127.0.0.1",
+            "pytest",
+            ["Grafo de conocimiento Akaike"],
+        )
+    )
+
+    interactions = [call for call in calls if call[0] == "interaction"]
+    assert [call[2] for call in interactions] == ["user", "assistant"]
+    assert all(call[3] == "presentacion" for call in interactions)
+    lead = next(call for call in calls if call[0] == "lead")
+    assert lead[2] == "Presentación M.A.T.I.A.S."
+    event = next(call for call in calls if call[0] == "event")[1]
+    assert event["event_type"] == "question"
+    assert event["data"]["reply"] == "Respuesta verificada"
+    assert result.source == "grafo_publico"
 
 
 def test_cuota_de_chat_se_agota_tras_10_mensajes():

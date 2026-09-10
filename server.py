@@ -742,6 +742,46 @@ def _sanitize_public_reply(text: str) -> str:
         limited = [" ".join(paragraphs[0].split()[:120]).rstrip(".,;:") + "."]
     return "\n\n".join(limited).strip()
 
+
+async def _persist_presentation_turn(
+    req: PresentacionRequest,
+    reply: str,
+    source: str,
+    client_ip: str,
+    client_ua: str,
+    sources: list[str] | None = None,
+) -> PresentacionResponse:
+    """Persiste el turno completo y registra el lead antes de confirmar éxito."""
+    await database.log_interaction(req.session_id, "user", req.message, source="presentacion")
+    await database.log_interaction(
+        req.session_id,
+        "assistant",
+        reply,
+        model="deepseek-chat" if source in {"grafo_publico", "diapositiva"} else None,
+        source="presentacion",
+    )
+    await leads.save_lead(
+        req.session_id,
+        req.message,
+        client_ip,
+        source="Presentación M.A.T.I.A.S.",
+    )
+    await database.log_presentation_event(
+        session_id=req.session_id,
+        event_type="question",
+        slide=req.slide if req.slide >= 0 else None,
+        data={"question": req.message, "reply": reply, "source": source},
+        ip=client_ip,
+        user_agent=client_ua,
+    )
+    return PresentacionResponse(
+        reply=reply,
+        session_id=req.session_id,
+        source=source,
+        sources=(sources or [])[:5],
+    )
+
+
 @app.post("/api/presentacion")
 async def presentacion_chat(req: PresentacionRequest, response: Response, request: Request):
     import oscar_graph_runtime
@@ -756,7 +796,9 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
             "Has superado tu cuota de chat de esta sesión. "
             "Si quieres conocer más, agenda una reunión aquí:\n" + AGENDA_URL
         )
-        return PresentacionResponse(reply=quota_reply, session_id=req.session_id, source="cuota")
+        return await _persist_presentation_turn(
+            req, quota_reply, "cuota", client_ip, client_ua
+        )
 
     # Texto de cada diapositiva
     slides = {
@@ -783,22 +825,12 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
                         "comuníqueme", "comuniqueme", "hablar con", "llamar", "cita",
                         "agendar", "agenda", "calendario", "whatsapp"]
     if any(re.search(r"(?<!\w)" + re.escape(kw) + r"(?!\w)", req.message, re.IGNORECASE) for kw in contacto_keywords):
-        contact_reply = AGENDA_CTA
-        try:
-            await database.log_presentation_event(
-                session_id=req.session_id,
-                event_type="question",
-                slide=req.slide if req.slide >= 0 else None,
-                data={"question": req.message, "reply": contact_reply},
-                ip=client_ip,
-                user_agent=client_ua,
-            )
-        except Exception:
-            pass
-        return PresentacionResponse(
-            reply=contact_reply,
-            session_id=req.session_id,
-            source="agenda",
+        contact_reply = (
+            AGENDA_CTA
+            + "\n\nSi prefieres que Amelia te contacte, déjame tu nombre, entidad, cargo, correo y WhatsApp."
+        )
+        return await _persist_presentation_turn(
+            req, contact_reply, "agenda", client_ip, client_ua
         )
 
     # DETECCIÓN DE PROFUNDIZACIÓN TÉCNICA: redirigir a reunión, sin detalles de modelado.
@@ -818,21 +850,8 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
             "Ese detalle lo diseñamos a la medida de tu operación, así que prefiero mostrártelo "
             "en una reunión donde revisamos tu caso concreto. " + AGENDA_CTA
         )
-        try:
-            await database.log_presentation_event(
-                session_id=req.session_id,
-                event_type="question",
-                slide=req.slide if req.slide >= 0 else None,
-                data={"question": req.message, "reply": tecnico_reply},
-                ip=client_ip,
-                user_agent=client_ua,
-            )
-        except Exception:
-            pass
-        return PresentacionResponse(
-            reply=tecnico_reply,
-            session_id=req.session_id,
-            source="agenda",
+        return await _persist_presentation_turn(
+            req, tecnico_reply, "agenda", client_ip, client_ua
         )
 
     if slide_text:
@@ -848,19 +867,19 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
         full_context += f"\n[GRAFO PÚBLICO CON PROCEDENCIA]\n{graph_context}\n[/GRAFO PÚBLICO CON PROCEDENCIA]"
 
     if not full_context.strip():
-        return PresentacionResponse(
-            reply=FALLBACK_REPLY,
-            session_id=req.session_id,
-            source="sin_fuente",
+        return await _persist_presentation_turn(
+            req, FALLBACK_REPLY, "sin_fuente", client_ip, client_ua
         )
 
     # Llamar a DeepSeek
     api_key = os.getenv("DEEPSEEK_API_KEY", "")
     if not api_key:
-        return PresentacionResponse(
-            reply="Servicio no disponible.\n" + AGENDA_URL,
-            session_id=req.session_id,
-            source="sin_fuente",
+        return await _persist_presentation_turn(
+            req,
+            "Servicio no disponible.\n" + AGENDA_URL,
+            "sin_fuente",
+            client_ip,
+            client_ua,
         )
 
     response_source = "grafo_publico" if graph_context else "diapositiva"
@@ -895,17 +914,14 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     if response_source in {"grafo_publico", "diapositiva"} and AGENDA_URL not in reply:
         reply = reply.rstrip() + "\n\n" + AGENDA_CTA
 
-    # Registrar pregunta en BD
-    await database.log_presentation_event(
-        session_id=req.session_id,
-        event_type="question",
-        slide=req.slide if req.slide >= 0 else None,
-        data={"question": req.message, "reply": reply},
-        ip=client_ip,
-        user_agent=client_ua,
+    return await _persist_presentation_turn(
+        req,
+        reply,
+        response_source,
+        client_ip,
+        client_ua,
+        graph_sources,
     )
-
-    return PresentacionResponse(reply=reply, session_id=req.session_id, source=response_source, sources=graph_sources[:5])
 
 
 # ─── Eventos de presentación ──────────────────────────────────────────────

@@ -14,7 +14,8 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 OPENCLAW = Path("/Volumes/OpenClaw/OPENCLAW")
-MATIAS_API = Path(os.getenv("MATIAS_API_PATH", "/Volumes/OpenClaw/Matias Seek/api"))
+DEFAULT_MATIAS_API = Path.home() / "matias-api-oscar-graph"
+MATIAS_API = Path(os.getenv("MATIAS_API_PATH", str(DEFAULT_MATIAS_API)))
 load_dotenv(OPENCLAW / ".env")
 load_dotenv(Path("/Volumes/OpenClaw/Matias Seek/config/.env"), override=False)
 sys.path.insert(0, str(OPENCLAW))
