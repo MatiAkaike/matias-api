@@ -74,6 +74,9 @@ rate_tracker: dict[tuple[str, str], deque[float]] = {}
 rate_tracker_lock = threading.Lock()
 geo_cache: dict[str, tuple[float, dict]] = {}
 geo_cache_lock = threading.Lock()
+GEO_CACHE_MAX = 10000
+GEO_CACHE_TTL = 86400       # caché positiva de geolocalización (1 día)
+GEO_NEGATIVE_TTL = 300      # caché negativa ante fallo del proveedor (5 min)
 
 CHAT_QUOTA_LIMIT = 10
 CHAT_QUOTA_WINDOW = 24 * 3600  # segundos antes de resetear la cuota por IP
@@ -159,6 +162,15 @@ async def _get_client_context(request: Request) -> dict:
     if cached and cached[0] > now:
         return {**context, **cached[1]}
 
+    def _cache(ttl: int, value: dict) -> None:
+        with geo_cache_lock:
+            if len(geo_cache) >= GEO_CACHE_MAX:
+                for key in sorted(geo_cache, key=lambda k: geo_cache[k][0]):
+                    del geo_cache[key]
+                    if len(geo_cache) < GEO_CACHE_MAX:
+                        break
+            geo_cache[ip] = (now + ttl, value)
+
     try:
         async with httpx.AsyncClient(timeout=2.5) as client:
             geo_response = await client.get(f"https://ipwho.is/{ip}")
@@ -174,11 +186,10 @@ async def _get_client_context(request: Request) -> dict:
                 "timezone": (data.get("timezone") or {}).get("id", "") or context["timezone"],
                 "network_org": (data.get("connection") or {}).get("org", ""),
             }
-            with geo_cache_lock:
-                geo_cache[ip] = (now + 86400, geo)
+            _cache(GEO_CACHE_TTL, geo)
             return {**context, **geo}
     except Exception:
-        pass
+        _cache(GEO_NEGATIVE_TTL, {})
     return context
 
 
@@ -522,7 +533,7 @@ async def _chat_impl(req: ChatRequest, request: Request):
                 session.add_message(item["role"], item["content"])
 
     if not session:
-        sid = str(uuid.uuid4())
+        sid = sid or str(uuid.uuid4())
         session = Session(sid)
     assert sid is not None
     with sessions_lock:

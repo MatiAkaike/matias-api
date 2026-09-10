@@ -1,5 +1,5 @@
 import unittest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 from pydantic import ValidationError
@@ -86,6 +86,23 @@ class ClientContextTests(unittest.IsolatedAsyncioTestCase):
     async def test_analytics_failure_does_not_break_chat_path(self):
         with patch.object(server.analytics_store, "touch_session", side_effect=RuntimeError("db down")):
             await server._touch_session_safe("qa-session", {"ip": "8.8.8.8"})
+
+    async def test_chat_preserves_frontend_session_id(self):
+        sid = "web-qa-linked-session"
+        request = Request({
+            "type": "http", "method": "POST", "path": "/api/chat", "headers": [],
+            "client": ("127.0.0.1", 1234), "server": ("test", 80),
+            "scheme": "http", "query_string": b"",
+        })
+        server.sessions.pop(sid, None)
+        with (
+            patch.object(server.database, "get_session_interactions", new=AsyncMock(return_value=[])),
+            patch.object(server.database, "log_interaction", new=AsyncMock()),
+            patch.object(server.leads, "save_lead", new=AsyncMock()),
+            patch.object(server, "_touch_session_safe", new=AsyncMock()),
+        ):
+            response = await server._chat_impl(server.ChatRequest(message="quiero agendar", session_id=sid), request)
+        self.assertEqual(response.session_id, sid)
 
 
 class SecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):

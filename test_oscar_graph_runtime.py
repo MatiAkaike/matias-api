@@ -6,11 +6,22 @@ import re
 from pathlib import Path
 
 import oscar_graph_runtime
+import pytest
 import server
 from fastapi.testclient import TestClient
 
 
 BASE = Path(__file__).resolve().parent / "oscar_graph"
+
+
+@pytest.fixture(autouse=True)
+def reset_presentation_quota():
+    """Aísla los tests del límite global de cuota por IP."""
+    with server._chat_quota_lock:
+        server._chat_quota.clear()
+    yield
+    with server._chat_quota_lock:
+        server._chat_quota.clear()
 
 
 def test_busqueda_crediticia_tiene_procedencia_y_usa_grafo():
