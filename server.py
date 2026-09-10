@@ -752,28 +752,43 @@ async def _persist_presentation_turn(
     sources: list[str] | None = None,
 ) -> PresentacionResponse:
     """Persiste el turno completo y registra el lead antes de confirmar éxito."""
-    await database.log_interaction(req.session_id, "user", req.message, source="presentacion")
-    await database.log_interaction(
-        req.session_id,
-        "assistant",
-        reply,
-        model="deepseek-chat" if source in {"grafo_publico", "diapositiva"} else None,
-        source="presentacion",
-    )
-    await leads.save_lead(
-        req.session_id,
-        req.message,
-        client_ip,
-        source="Presentación M.A.T.I.A.S.",
-    )
-    await database.log_presentation_event(
-        session_id=req.session_id,
-        event_type="question",
-        slide=req.slide if req.slide >= 0 else None,
-        data={"question": req.message, "reply": reply, "source": source},
-        ip=client_ip,
-        user_agent=client_ua,
-    )
+    pool = await database._get_pg_pool()
+
+    async def persist(conn=None):
+        await database.log_interaction(
+            req.session_id, "user", req.message, source="presentacion", conn=conn
+        )
+        await database.log_interaction(
+            req.session_id,
+            "assistant",
+            reply,
+            model="deepseek-chat" if source in {"grafo_publico", "diapositiva"} else None,
+            source="presentacion",
+            conn=conn,
+        )
+        await leads.save_lead(
+            req.session_id,
+            req.message,
+            client_ip,
+            source="Presentación M.A.T.I.A.S.",
+            conn=conn,
+        )
+        await database.log_presentation_event(
+            session_id=req.session_id,
+            event_type="question",
+            slide=req.slide if req.slide >= 0 else None,
+            data={"question": req.message, "reply": reply, "source": source},
+            ip=client_ip,
+            user_agent=client_ua,
+            conn=conn,
+        )
+
+    if pool:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                await persist(conn)
+    else:
+        await persist()
     return PresentacionResponse(
         reply=reply,
         session_id=req.session_id,
