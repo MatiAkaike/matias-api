@@ -438,6 +438,10 @@ class AnalyticsPageView(BaseModel):
     language: Optional[str] = Field(default=None, max_length=50)
     screen_resolution: Optional[str] = Field(default=None, max_length=30)
     viewport_size: Optional[str] = Field(default=None, max_length=30)
+    # Consentimiento de analítica: sin consentimiento explícito NO se registra
+    # navegación, campaña ni geolocalización con finalidad analítica.
+    consent: bool = False
+    consent_version: Optional[str] = Field(default=None, max_length=32)
 
 
 class AnalyticsEvent(BaseModel):
@@ -446,6 +450,8 @@ class AnalyticsEvent(BaseModel):
     element: Optional[str] = Field(default=None, max_length=500)
     url: Optional[str] = Field(default=None, max_length=2048)
     metadata: Optional[str] = Field(default=None, max_length=4000)
+    consent: bool = False
+    consent_version: Optional[str] = Field(default=None, max_length=32)
 
 # ─── Routes ──────────────────────────────────────────────────────────────────
 
@@ -631,6 +637,11 @@ async def session_interactions(session_id: str, limit: int = 50):
 
 @app.post("/api/analytics/pageview")
 async def track_pageview(req: AnalyticsPageView, request: Request):
+    # Consentimiento de analítica: sin consentimiento explícito no se registra
+    # navegación, campaña ni geolocalización con finalidad analítica. Los datos
+    # operativos del chat/seguridad se mantienen en sus rutas propias.
+    if not req.consent:
+        return {"status": "ok", "accepted": False, "reason": "consent_not_granted"}
     client_context = await _get_client_context(request)
     client_context.update({
         "timezone": req.timezone or client_context["timezone"],
@@ -653,14 +664,17 @@ async def track_pageview(req: AnalyticsPageView, request: Request):
         req.session_id, req.url, referrer, ua, country,
         source=source, ip=client_ip, context=client_context,
     )
-    return {"status": "ok"}
+    return {"status": "ok", "accepted": True}
 
 
 @app.post("/api/analytics/event")
 async def track_event(req: AnalyticsEvent, request: Request):
+    # Misma política de consentimiento que pageview.
+    if not req.consent:
+        return {"status": "ok", "accepted": False, "reason": "consent_not_granted"}
     client_ip = _get_client_ip(request)
     await analytics_store.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata, ip=client_ip)
-    return {"status": "ok"}
+    return {"status": "ok", "accepted": True}
 
 
 # ─── Analytics reporting endpoints (para Amelia) ──────────────────────────
