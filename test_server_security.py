@@ -1,4 +1,5 @@
 import unittest
+from unittest.mock import patch
 
 import httpx
 from pydantic import ValidationError
@@ -40,6 +41,53 @@ class SecurityBoundaryTests(unittest.TestCase):
             )
 
 
+class ClientContextTests(unittest.IsolatedAsyncioTestCase):
+    async def test_extracts_ip_geo_and_user_agent_from_trusted_headers(self):
+        request = Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/",
+            "headers": [
+                (b"x-forwarded-for", b"8.8.8.8"),
+                (b"user-agent", b"Mozilla/5.0 Test"),
+                (b"x-vercel-ip-country", b"CO"),
+                (b"x-vercel-ip-country-region", b"ANT"),
+                (b"x-vercel-ip-city", b"Medell%C3%ADn"),
+                (b"x-vercel-ip-latitude", b"6.2442"),
+                (b"x-vercel-ip-longitude", b"-75.5812"),
+            ],
+            "client": ("10.0.0.2", 1234),
+            "server": ("test", 80),
+            "scheme": "http",
+            "query_string": b"",
+        })
+        with patch.dict("os.environ", {"TRUST_EDGE_GEO_HEADERS": "true"}):
+            context = await server._get_client_context(request)
+        self.assertEqual(context["ip"], "8.8.8.8")
+        self.assertEqual(context["country"], "CO")
+        self.assertEqual(context["region"], "ANT")
+        self.assertEqual(context["city"], "Medellín")
+        self.assertEqual(context["user_agent"], "Mozilla/5.0 Test")
+        self.assertEqual(context["latitude"], 6.2442)
+        self.assertEqual(context["longitude"], -75.5812)
+
+    async def test_ignores_spoofed_geo_headers_by_default(self):
+        request = Request({
+            "type": "http", "method": "GET", "path": "/",
+            "headers": [(b"cf-ipcountry", b"XX"), (b"x-vercel-ip-city", b"Fake")],
+            "client": ("8.8.8.8", 1234), "server": ("test", 80),
+            "scheme": "http", "query_string": b"",
+        })
+        with patch.dict("os.environ", {"GEOIP_LOOKUP_ENABLED": "false"}):
+            context = await server._get_client_context(request)
+        self.assertEqual(context["country"], "unknown")
+        self.assertEqual(context["city"], "")
+
+    async def test_analytics_failure_does_not_break_chat_path(self):
+        with patch.object(server.analytics_store, "touch_session", side_effect=RuntimeError("db down")):
+            await server._touch_session_safe("qa-session", {"ip": "8.8.8.8"})
+
+
 class SecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
         server.rate_tracker.clear()
@@ -59,6 +107,10 @@ class SecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_operations_status_is_not_public(self):
         response = await self.client.get("/api/operations/status")
+        self.assertIn(response.status_code, (401, 503))
+
+    async def test_signals_report_is_not_public(self):
+        response = await self.client.get("/api/analytics/signals")
         self.assertIn(response.status_code, (401, 503))
 
     async def test_large_body_is_rejected_before_route(self):

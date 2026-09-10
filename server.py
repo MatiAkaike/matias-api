@@ -7,6 +7,7 @@ import time
 import threading
 import asyncio
 import ipaddress
+from urllib.parse import unquote
 from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager
@@ -71,6 +72,8 @@ ip_tracker: dict[str, dict] = {}
 ip_tracker_lock = threading.Lock()
 rate_tracker: dict[tuple[str, str], deque[float]] = {}
 rate_tracker_lock = threading.Lock()
+geo_cache: dict[str, tuple[float, dict]] = {}
+geo_cache_lock = threading.Lock()
 
 CHAT_QUOTA_LIMIT = 10
 CHAT_QUOTA_WINDOW = 24 * 3600  # segundos antes de resetear la cuota por IP
@@ -110,6 +113,81 @@ def _get_client_ip(request: Request) -> str:
             except ValueError:
                 continue
     return peer or "unknown"
+
+
+def _header_value(request: Request, *names: str) -> str:
+    for name in names:
+        value = request.headers.get(name, "").strip()
+        if value:
+            return unquote(value)[:250]
+    return ""
+
+
+async def _get_client_context(request: Request) -> dict:
+    """Extrae red, navegador y geografía; usa GeoIP si el proxy no la entrega."""
+    ip = _get_client_ip(request)
+    trust_edge_geo = os.getenv("TRUST_EDGE_GEO_HEADERS", "false").lower() == "true"
+    context = {
+        "ip": ip,
+        "user_agent": request.headers.get("User-Agent", "")[:2048],
+        "country": (_header_value(request, "CF-IPCountry", "X-Vercel-IP-Country") if trust_edge_geo else "") or "unknown",
+        "region": _header_value(request, "CF-Region", "X-Vercel-IP-Country-Region") if trust_edge_geo else "",
+        "city": _header_value(request, "CF-IPCity", "X-Vercel-IP-City") if trust_edge_geo else "",
+        "timezone": _header_value(request, "CF-Timezone", "X-Vercel-IP-Timezone") if trust_edge_geo else "",
+        "latitude": None,
+        "longitude": None,
+        "network_org": "",
+    }
+    for key, header in (("latitude", "X-Vercel-IP-Latitude"), ("longitude", "X-Vercel-IP-Longitude")):
+        try:
+            value = request.headers.get(header) if trust_edge_geo else None
+            context[key] = float(value) if value else None
+        except ValueError:
+            context[key] = None
+
+    try:
+        public_ip = ipaddress.ip_address(ip)
+        should_lookup = not public_ip.is_private and context["city"] == ""
+    except ValueError:
+        should_lookup = False
+    if not should_lookup or os.getenv("GEOIP_LOOKUP_ENABLED", "true").lower() != "true":
+        return context
+
+    now = time.time()
+    with geo_cache_lock:
+        cached = geo_cache.get(ip)
+    if cached and cached[0] > now:
+        return {**context, **cached[1]}
+
+    try:
+        async with httpx.AsyncClient(timeout=2.5) as client:
+            geo_response = await client.get(f"https://ipwho.is/{ip}")
+            geo_response.raise_for_status()
+            data = geo_response.json()
+        if data.get("success", True):
+            geo = {
+                "country": data.get("country_code") or data.get("country") or context["country"],
+                "region": data.get("region") or context["region"],
+                "city": data.get("city") or context["city"],
+                "latitude": data.get("latitude"),
+                "longitude": data.get("longitude"),
+                "timezone": (data.get("timezone") or {}).get("id", "") or context["timezone"],
+                "network_org": (data.get("connection") or {}).get("org", ""),
+            }
+            with geo_cache_lock:
+                geo_cache[ip] = (now + 86400, geo)
+            return {**context, **geo}
+    except Exception:
+        pass
+    return context
+
+
+async def _touch_session_safe(session_id: str, context: dict, source: str = "web") -> None:
+    """Registra Signals sin convertir una caída analítica en caída del chatbot."""
+    try:
+        await analytics_store.touch_session(session_id, context, source=source)
+    except Exception as exc:
+        print(f"WARNING: no se pudo persistir contexto Signals ({type(exc).__name__})")
 
 
 def _allow_request(ip: str, bucket: str, limit: int, window: int = 60) -> bool:
@@ -292,6 +370,7 @@ async def protect_sensitive_routes(request: Request, call_next):
         "/api/analytics/ip/",
         "/api/analytics/conversions",
         "/api/analytics/dashboard",
+        "/api/analytics/signals",
         "/api/presentacion/stats",
         "/api/presentacion/evaluate",
         "/api/admin/",
@@ -344,6 +423,10 @@ class AnalyticsPageView(BaseModel):
     utm_source: Optional[str] = Field(default=None, max_length=200)
     utm_medium: Optional[str] = Field(default=None, max_length=200)
     utm_campaign: Optional[str] = Field(default=None, max_length=200)
+    timezone: Optional[str] = Field(default=None, max_length=100)
+    language: Optional[str] = Field(default=None, max_length=50)
+    screen_resolution: Optional[str] = Field(default=None, max_length=30)
+    viewport_size: Optional[str] = Field(default=None, max_length=30)
 
 
 class AnalyticsEvent(BaseModel):
@@ -389,8 +472,10 @@ async def new_session(request: Request):
     with sessions_lock:
         sessions[sid] = Session(sid)
 
-    # Trackear IP por nueva sesión
-    client_ip = _get_client_ip(request)
+    # Registrar contexto técnico desde el primer contacto.
+    client_context = await _get_client_context(request)
+    client_ip = client_context["ip"]
+    await _touch_session_safe(sid, client_context)
     if _check_ip_abuse(client_ip, sid):
         asyncio.ensure_future(_send_abuse_alert(client_ip, len(ip_tracker.get(client_ip, {}).get("sessions", set())), sid))
 
@@ -420,8 +505,9 @@ async def _chat_impl(req: ChatRequest, request: Request):
     if len(req.message) > MAX_MESSAGE_LENGTH:
         raise HTTPException(status_code=413, detail="El mensaje excede el tamaño permitido")
 
-    # ── Detección de abuso por IP ──
-    client_ip = _get_client_ip(request)
+    # ── Detección de abuso y contexto Signals ──
+    client_context = await _get_client_context(request)
+    client_ip = client_context["ip"]
     sid = req.session_id
 
     with sessions_lock:
@@ -441,6 +527,8 @@ async def _chat_impl(req: ChatRequest, request: Request):
     assert sid is not None
     with sessions_lock:
         sessions[sid] = session
+
+    await _touch_session_safe(sid, client_context, source="web")
 
     # Trackear IP y verificar umbral de abuso
     if _check_ip_abuse(client_ip, sid):
@@ -532,15 +620,28 @@ async def session_interactions(session_id: str, limit: int = 50):
 
 @app.post("/api/analytics/pageview")
 async def track_pageview(req: AnalyticsPageView, request: Request):
-    ua = request.headers.get("User-Agent", "")
+    client_context = await _get_client_context(request)
+    client_context.update({
+        "timezone": req.timezone or client_context["timezone"],
+        "language": req.language or "",
+        "screen_resolution": req.screen_resolution or "",
+        "viewport_size": req.viewport_size or "",
+        "utm_source": req.utm_source or "",
+        "utm_medium": req.utm_medium or "",
+        "utm_campaign": req.utm_campaign or "",
+    })
+    ua = client_context["user_agent"]
     referrer = req.referrer or request.headers.get("Referer", "")
-    country = request.headers.get("CF-IPCountry") or request.headers.get("X-Vercel-IP-Country") or "unknown"
-    client_ip = _get_client_ip(request)
+    country = client_context["country"]
+    client_ip = client_context["ip"]
     # Determinar la fuente de tráfico
     source = req.utm_source or req.source or ""
     if not source and referrer:
         source = referrer  # fallback: dominio de referencia
-    await analytics_store.log_page_view(req.session_id, req.url, referrer, ua, country, source=source, ip=client_ip)
+    await analytics_store.log_page_view(
+        req.session_id, req.url, referrer, ua, country,
+        source=source, ip=client_ip, context=client_context,
+    )
     return {"status": "ok"}
 
 
@@ -572,6 +673,11 @@ async def analytics_visitors(limit: int = 50):
     return {"total": len(rows), "visitors": rows}
 
 
+@app.get("/api/analytics/signals")
+async def analytics_signals(dias: int = 7):
+    return await analytics_store.get_signal_summary(dias)
+
+
 # ─── Leads endpoint (para Amelia) ──────────────────────────────────────────
 
 @app.get("/api/leads")
@@ -589,12 +695,13 @@ async def get_session_journey(session_id: str):
     pageviews = await analytics_store.get_page_views_by_session(session_id)
     events = await analytics_store.get_events_by_session(session_id)
     lead_data = await leads.get_lead_by_session(session_id)
+    session_context = await analytics_store.get_session_context(session_id)
 
     # Buscar sesiones hermanas (misma IP)
-    ip = ""
-    if pageviews:
+    ip = session_context.get("ip", "")
+    if not ip and pageviews:
         ip = pageviews[0].get("ip", "")
-    elif lead_data:
+    elif not ip and lead_data:
         ip = lead_data.get("ip", "")
 
     sibling_sessions = await analytics_store.get_sessions_by_ip(ip) if ip else []
@@ -617,6 +724,7 @@ async def get_session_journey(session_id: str):
     return {
         "session_id": session_id,
         "ip": ip,
+        "context": session_context,
         "total_pageviews": len(pageviews),
         "total_events": len(events),
         "converted": converted,
@@ -786,9 +894,11 @@ async def _persist_presentation_turn(
 async def presentacion_chat(req: PresentacionRequest, response: Response, request: Request):
     import oscar_graph_runtime
 
-    # Extraer IP
-    client_ip = _get_client_ip(request)
-    client_ua = request.headers.get("User-Agent", "")
+    # Registrar IP, geografía y dispositivo de la sesión de presentación.
+    client_context = await _get_client_context(request)
+    client_ip = client_context["ip"]
+    client_ua = client_context["user_agent"]
+    await _touch_session_safe(req.session_id, client_context, source="presentacion")
 
     # LÍMITE DE CUOTA: evita conversaciones indefinidas que consumen tokens.
     if not _consume_chat_quota(client_ip):
