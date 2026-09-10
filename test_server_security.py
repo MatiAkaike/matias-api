@@ -40,6 +40,13 @@ class SecurityBoundaryTests(unittest.TestCase):
                 metadata="x" * 4001,
             )
 
+    def test_analytics_models_default_consent_false(self):
+        # Sin consentimiento explícito, la analítica NO se captura.
+        pv = server.AnalyticsPageView(session_id="s", url="https://akaike.lat/")
+        self.assertFalse(pv.consent)
+        ev = server.AnalyticsEvent(session_id="s", event_type="click")
+        self.assertFalse(ev.consent)
+
 
 class ClientContextTests(unittest.IsolatedAsyncioTestCase):
     async def test_extracts_ip_geo_and_user_agent_from_trusted_headers(self):
@@ -137,6 +144,36 @@ class SecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
             headers={"content-length": "70000"},
         )
         self.assertEqual(response.status_code, 413)
+
+    async def test_pageview_without_consent_is_not_stored(self):
+        with patch.object(server.analytics_store, "log_page_view", new=AsyncMock()) as mock_log:
+            response = await self.client.post(
+                "/api/analytics/pageview",
+                json={"session_id": "s1", "url": "https://akaike.lat/", "consent": False},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["accepted"])
+            mock_log.assert_not_awaited()
+
+    async def test_pageview_with_consent_is_stored(self):
+        with patch.object(server.analytics_store, "log_page_view", new=AsyncMock()) as mock_log:
+            response = await self.client.post(
+                "/api/analytics/pageview",
+                json={"session_id": "s1", "url": "https://akaike.lat/", "consent": True},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["accepted"])
+            mock_log.assert_awaited_once()
+
+    async def test_event_without_consent_is_not_stored(self):
+        with patch.object(server.analytics_store, "log_event", new=AsyncMock()) as mock_log:
+            response = await self.client.post(
+                "/api/analytics/event",
+                json={"session_id": "s1", "event_type": "click", "consent": False},
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["accepted"])
+            mock_log.assert_not_awaited()
 
 
 if __name__ == "__main__":
