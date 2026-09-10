@@ -72,6 +72,8 @@ def test_sanitizador_publico_remueve_contactos_y_autores():
 
 
 def test_endpoint_se_abstiene_fuera_del_dominio_y_valida_tamano():
+    with server._chat_quota_lock:
+        server._chat_quota.clear()
     client = TestClient(server.app)
     response = client.post(
         "/api/presentacion",
@@ -135,19 +137,48 @@ def test_pregunta_comercial_no_dispara_redireccion_tecnica():
 
 def test_turno_presentacion_persiste_chat_evento_y_lead(monkeypatch):
     calls = []
+    transaction_events = []
 
-    async def fake_log_interaction(session_id, role, content, model=None, source="web"):
-        calls.append(("interaction", session_id, role, source, model, content))
+    async def fake_log_interaction(session_id, role, content, model=None, source="web", conn=None):
+        calls.append(("interaction", session_id, role, source, model, content, conn))
 
-    async def fake_save_lead(session_id, text, ip="", source=""):
-        calls.append(("lead", session_id, source, ip, text))
+    async def fake_save_lead(session_id, text, ip="", source="", conn=None):
+        calls.append(("lead", session_id, source, ip, text, conn))
         return {"session_id": session_id}
 
     async def fake_log_event(**kwargs):
         calls.append(("event", kwargs))
 
+    class Transaction:
+        async def __aenter__(self):
+            transaction_events.append("begin")
+
+        async def __aexit__(self, exc_type, *_args):
+            transaction_events.append("commit" if exc_type is None else "rollback")
+
+    class Connection:
+        def transaction(self):
+            return Transaction()
+
+    transaction_conn = Connection()
+
+    class Acquire:
+        async def __aenter__(self):
+            return transaction_conn
+
+        async def __aexit__(self, *_args):
+            return False
+
+    class Pool:
+        def acquire(self):
+            return Acquire()
+
+    async def fake_get_pool():
+        return Pool()
+
     monkeypatch.setattr(server.database, "log_interaction", fake_log_interaction)
     monkeypatch.setattr(server.database, "log_presentation_event", fake_log_event)
+    monkeypatch.setattr(server.database, "_get_pg_pool", fake_get_pool)
     monkeypatch.setattr(server.leads, "save_lead", fake_save_lead)
     req = server.PresentacionRequest(
         message="Soy Ana, mi correo es ana@example.com",
@@ -174,6 +205,10 @@ def test_turno_presentacion_persiste_chat_evento_y_lead(monkeypatch):
     event = next(call for call in calls if call[0] == "event")[1]
     assert event["event_type"] == "question"
     assert event["data"]["reply"] == "Respuesta verificada"
+    assert transaction_events == ["begin", "commit"]
+    assert all(call[-1] is transaction_conn for call in interactions)
+    assert lead[-1] is transaction_conn
+    assert event["conn"] is transaction_conn
     assert result.source == "grafo_publico"
 
 

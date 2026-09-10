@@ -171,8 +171,16 @@ async def init_leads_db() -> None:
         await conn.execute("ALTER TABLE leads ENABLE ROW LEVEL SECURITY")
 
 
-async def _conversation(session_id: str) -> list[dict[str, str]]:
-    rows = await database.get_session_interactions(session_id, 50)
+async def _conversation(session_id: str, conn=None) -> list[dict[str, str]]:
+    if conn is not None:
+        rows = await conn.fetch(
+            """SELECT role, content, timestamp FROM chat_interactions
+               WHERE session_id=$1 ORDER BY timestamp DESC LIMIT 50""",
+            session_id,
+        )
+        rows = [dict(row) for row in rows]
+    else:
+        rows = await database.get_session_interactions(session_id, 50)
     rows = sorted(rows, key=lambda row: str(row.get("timestamp", "")))
     return [{"role": row.get("role", ""), "content": row.get("content", "")} for row in rows]
 
@@ -182,21 +190,18 @@ async def save_lead(
     text: str,
     ip: str = "",
     source: str = "Web - M.A.T.I.A.S.",
+    conn=None,
 ) -> dict[str, Any] | None:
     """Acumula datos compartidos en varios turnos y hace upsert por sesión."""
-    conversation = await _conversation(session_id)
+    conversation = await _conversation(session_id, conn=conn)
     full_text = "\n".join(item["content"] for item in conversation if item["role"] == "user")
     data = _extract_lead_data(full_text or text)
     if not data:
         return None
 
-    pool = await database._get_pg_pool()
-    if not pool:
-        raise RuntimeError("PostgreSQL no disponible para guardar lead")
-
-    async with pool.acquire() as conn:
+    async def upsert(active_conn):
         payload = json.dumps(conversation, ensure_ascii=False)
-        row = await conn.fetchrow(
+        row = await active_conn.fetchrow(
             """
             INSERT INTO leads (
                 session_id, name, company, job_title, phone, email,
@@ -269,6 +274,14 @@ async def save_lead(
         lead = _public_lead(row)
         lead["_contact_ready"] = bool(lead.get("correo") or lead.get("whatsapp"))
         return lead
+
+    if conn is not None:
+        return await upsert(conn)
+    pool = await database._get_pg_pool()
+    if not pool:
+        raise RuntimeError("PostgreSQL no disponible para guardar lead")
+    async with pool.acquire() as active_conn:
+        return await upsert(active_conn)
 
 
 async def _update_status(session_id: str, channel: str, sent: bool, error: str = "") -> None:
