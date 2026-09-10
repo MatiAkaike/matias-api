@@ -146,18 +146,28 @@ async def init_leads_db() -> None:
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_attempts INTEGER DEFAULT 0",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS whatsapp_attempts INTEGER DEFAULT 0",
             "ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_attempts INTEGER DEFAULT 0",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS email_claimed_at TIMESTAMPTZ",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS whatsapp_claimed_at TIMESTAMPTZ",
+            "ALTER TABLE leads ADD COLUMN IF NOT EXISTS telegram_claimed_at TIMESTAMPTZ",
         ]
         for statement in migrations:
             await conn.execute(statement)
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_created_at ON leads(created_at DESC)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_phone ON leads(phone)")
         await conn.execute("CREATE INDEX IF NOT EXISTS idx_leads_email ON leads(email)")
-        try:
-            await conn.execute(
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_session_id ON leads(session_id) WHERE session_id IS NOT NULL"
+        duplicates = await conn.fetchval(
+            """SELECT COUNT(*) FROM (
+                   SELECT session_id FROM leads WHERE session_id IS NOT NULL
+                   GROUP BY session_id HAVING COUNT(*) > 1
+               ) duplicated"""
+        )
+        if duplicates:
+            raise RuntimeError(
+                f"Hay {duplicates} session_id duplicados en leads; no se puede garantizar el upsert"
             )
-        except Exception as exc:
-            logger.warning("No se pudo crear índice único de leads por sesión: %s", exc)
+        await conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_leads_session_id ON leads(session_id) WHERE session_id IS NOT NULL"
+        )
         await conn.execute("ALTER TABLE leads ENABLE ROW LEVEL SECURITY")
 
 
@@ -211,6 +221,9 @@ async def save_lead(
                 email_error=CASE
                     WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email THEN ''
                     ELSE leads.email_error END,
+                email_claimed_at=CASE
+                    WHEN EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email THEN NULL
+                    ELSE leads.email_claimed_at END,
                 whatsapp_sent=CASE
                     WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone THEN 0
                     ELSE leads.whatsapp_sent END,
@@ -220,6 +233,9 @@ async def save_lead(
                 whatsapp_error=CASE
                     WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone THEN ''
                     ELSE leads.whatsapp_error END,
+                whatsapp_claimed_at=CASE
+                    WHEN EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone THEN NULL
+                    ELSE leads.whatsapp_claimed_at END,
                 telegram_sent=CASE
                     WHEN (EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email)
                       OR (EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone) THEN 0
@@ -232,6 +248,10 @@ async def save_lead(
                     WHEN (EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email)
                       OR (EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone) THEN ''
                     ELSE leads.telegram_error END,
+                telegram_claimed_at=CASE
+                    WHEN (EXCLUDED.email IS NOT NULL AND EXCLUDED.email IS DISTINCT FROM leads.email)
+                      OR (EXCLUDED.phone IS NOT NULL AND EXCLUDED.phone IS DISTINCT FROM leads.phone) THEN NULL
+                    ELSE leads.telegram_claimed_at END,
                 updated_at=NOW()
             RETURNING *
             """,
@@ -259,7 +279,8 @@ async def _update_status(session_id: str, channel: str, sent: bool, error: str =
         raise RuntimeError("PostgreSQL no disponible para actualizar automatización")
     async with pool.acquire() as conn:
         await conn.execute(
-            f"UPDATE leads SET {channel}_sent=$2, {channel}_error=$3, updated_at=NOW() "
+            f"UPDATE leads SET {channel}_sent=$2, {channel}_error=$3, "
+            f"{channel}_claimed_at=NULL, updated_at=NOW() "
             f"WHERE session_id=$1 AND {channel}_sent=3",
             session_id,
             1 if sent else 2,
@@ -271,6 +292,8 @@ async def notify_amelia(lead: dict[str, Any], session_id: str, user_message: str
     if lead.get("telegram_sent") == 1:
         return {"sent": True, "already_sent": True}
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+        if lead.get("telegram_sent") == 3:
+            await _update_status(session_id, "telegram", False, "Telegram no configurado")
         return {"sent": False, "error": "Telegram no configurado"}
     fields = {
         "nombre": lead.get("nombre") or "Sin nombre",
@@ -371,17 +394,16 @@ async def get_pending_leads(limit: int = 20, claim: bool = True) -> list[dict[st
     pool = await database._get_pg_pool()
     if not pool:
         return []
-    eligible = """
-        (email IS NOT NULL AND email<>''
-            AND (email_sent IN (0,2) OR (email_sent=3 AND updated_at < NOW() - INTERVAL '15 minutes'))
-            AND email_attempts<5)
-        OR (phone IS NOT NULL AND phone<>''
-            AND (whatsapp_sent IN (0,2) OR (whatsapp_sent=3 AND updated_at < NOW() - INTERVAL '15 minutes'))
-            AND whatsapp_attempts<5)
-        OR (((email IS NOT NULL AND email<>'') OR (phone IS NOT NULL AND phone<>''))
-            AND (telegram_sent IN (0,2) OR (telegram_sent=3 AND updated_at < NOW() - INTERVAL '15 minutes'))
-            AND telegram_attempts<5)
-    """
+    email_ready = """email IS NOT NULL AND email<>'' AND email_attempts<5
+        AND (email_sent IN (0,2) OR
+             (email_sent=3 AND email_claimed_at < NOW() - INTERVAL '15 minutes'))"""
+    whatsapp_ready = """phone IS NOT NULL AND phone<>'' AND whatsapp_attempts<5
+        AND (whatsapp_sent IN (0,2) OR
+             (whatsapp_sent=3 AND whatsapp_claimed_at < NOW() - INTERVAL '15 minutes'))"""
+    telegram_ready = """(COALESCE(email,'')<>'' OR COALESCE(phone,'')<>'') AND telegram_attempts<5
+        AND (telegram_sent IN (0,2) OR
+             (telegram_sent=3 AND telegram_claimed_at < NOW() - INTERVAL '15 minutes'))"""
+    eligible = f"({email_ready}) OR ({whatsapp_ready}) OR ({telegram_ready})"
     async with pool.acquire() as conn:
         if not claim:
             rows = await conn.fetch(
@@ -396,30 +418,15 @@ async def get_pending_leads(limit: int = 20, claim: bool = True) -> list[dict[st
                     ORDER BY created_at ASC FOR UPDATE SKIP LOCKED LIMIT $1
                 )
                 UPDATE leads AS lead SET
-                    email_attempts=CASE WHEN lead.email IS NOT NULL AND lead.email<>''
-                        AND (lead.email_sent IN (0,2) OR (lead.email_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
-                        AND lead.email_attempts<5
-                        THEN lead.email_attempts+1 ELSE lead.email_attempts END,
-                    email_sent=CASE WHEN lead.email IS NOT NULL AND lead.email<>''
-                        AND (lead.email_sent IN (0,2) OR (lead.email_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
-                        AND lead.email_attempts<5
-                        THEN 3 ELSE lead.email_sent END,
-                    whatsapp_attempts=CASE WHEN lead.phone IS NOT NULL AND lead.phone<>''
-                        AND (lead.whatsapp_sent IN (0,2) OR (lead.whatsapp_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
-                        AND lead.whatsapp_attempts<5
-                        THEN lead.whatsapp_attempts+1 ELSE lead.whatsapp_attempts END,
-                    whatsapp_sent=CASE WHEN lead.phone IS NOT NULL AND lead.phone<>''
-                        AND (lead.whatsapp_sent IN (0,2) OR (lead.whatsapp_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
-                        AND lead.whatsapp_attempts<5
-                        THEN 3 ELSE lead.whatsapp_sent END,
-                    telegram_attempts=CASE WHEN (COALESCE(lead.email,'')<>'' OR COALESCE(lead.phone,'')<>'')
-                        AND (lead.telegram_sent IN (0,2) OR (lead.telegram_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
-                        AND lead.telegram_attempts<5
-                        THEN lead.telegram_attempts+1 ELSE lead.telegram_attempts END,
-                    telegram_sent=CASE WHEN (COALESCE(lead.email,'')<>'' OR COALESCE(lead.phone,'')<>'')
-                        AND (lead.telegram_sent IN (0,2) OR (lead.telegram_sent=3 AND lead.updated_at < NOW() - INTERVAL '15 minutes'))
-                        AND lead.telegram_attempts<5
-                        THEN 3 ELSE lead.telegram_sent END,
+                    email_attempts=CASE WHEN {email_ready} THEN lead.email_attempts+1 ELSE lead.email_attempts END,
+                    email_sent=CASE WHEN {email_ready} THEN 3 ELSE lead.email_sent END,
+                    email_claimed_at=CASE WHEN {email_ready} THEN NOW() ELSE lead.email_claimed_at END,
+                    whatsapp_attempts=CASE WHEN {whatsapp_ready} THEN lead.whatsapp_attempts+1 ELSE lead.whatsapp_attempts END,
+                    whatsapp_sent=CASE WHEN {whatsapp_ready} THEN 3 ELSE lead.whatsapp_sent END,
+                    whatsapp_claimed_at=CASE WHEN {whatsapp_ready} THEN NOW() ELSE lead.whatsapp_claimed_at END,
+                    telegram_attempts=CASE WHEN {telegram_ready} THEN lead.telegram_attempts+1 ELSE lead.telegram_attempts END,
+                    telegram_sent=CASE WHEN {telegram_ready} THEN 3 ELSE lead.telegram_sent END,
+                    telegram_claimed_at=CASE WHEN {telegram_ready} THEN NOW() ELSE lead.telegram_claimed_at END,
                     updated_at=NOW()
                 FROM candidates WHERE lead.id=candidates.id
                 RETURNING lead.*
