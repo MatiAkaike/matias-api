@@ -239,24 +239,32 @@ async def log_interaction(
     content: str,
     model: str | None = None,
     source: str = "web",
+    conn=None,
 ):
     now = datetime.now(timezone.utc)
 
-    async def write_pg(conn):
-        async with conn.transaction():
-            await conn.execute(
-                "INSERT INTO chat_interactions (session_id, role, content, timestamp, model, source) VALUES ($1, $2, $3, $4, $5, $6)",
-                session_id, role, content, now, model, source
-            )
-            await conn.execute("""
-                INSERT INTO chat_sessions (session_id, created_at, last_activity, message_count)
-                VALUES ($1, $2, $2, 1)
-                ON CONFLICT (session_id) DO UPDATE SET
-                    last_activity = $2,
-                    message_count = chat_sessions.message_count + 1
-            """, session_id, now)
+    async def write_pg(active_conn):
+        await active_conn.execute(
+            "INSERT INTO chat_interactions (session_id, role, content, timestamp, model, source) VALUES ($1, $2, $3, $4, $5, $6)",
+            session_id, role, content, now, model, source
+        )
+        await active_conn.execute("""
+            INSERT INTO chat_sessions (session_id, created_at, last_activity, message_count)
+            VALUES ($1, $2, $2, 1)
+            ON CONFLICT (session_id) DO UPDATE SET
+                last_activity = $2,
+                message_count = chat_sessions.message_count + 1
+        """, session_id, now)
 
-    if await _run_pg_write(write_pg):
+    if conn is not None:
+        await write_pg(conn)
+        return
+
+    async def transactional_write(active_conn):
+        async with active_conn.transaction():
+            await write_pg(active_conn)
+
+    if await _run_pg_write(transactional_write):
         return
 
     # SQLite fallback para desarrollo local.
@@ -433,17 +441,22 @@ async def get_analytics_dashboard():
 # ── Presentation events ───────────────────────────────────────────────
 
 async def log_presentation_event(session_id: str, event_type: str, slide: int | None = None,
-                                  data: dict | None = None, ip: str | None = None, user_agent: str | None = None):
+                                  data: dict | None = None, ip: str | None = None,
+                                  user_agent: str | None = None, conn=None):
     """Registra un evento crítico; no confirma éxito si PostgreSQL falla."""
     import json as _json
 
-    async def write_pg(conn):
-        await conn.execute(
+    async def write_pg(active_conn):
+        await active_conn.execute(
             """INSERT INTO presentation_events (session_id, event_type, slide, data, ip, user_agent)
                VALUES ($1, $2, $3, $4, $5, $6)""",
             session_id, event_type, slide,
             _json.dumps(data or {}), ip, user_agent
         )
+
+    if conn is not None:
+        await write_pg(conn)
+        return
 
     if await _run_pg_write(write_pg):
         return
