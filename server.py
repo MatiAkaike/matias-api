@@ -683,24 +683,28 @@ async def track_event(req: AnalyticsEvent, request: Request):
 @app.get("/api/analytics/dashboard")
 async def analytics_dashboard():
     data = await analytics_store.get_analytics_dashboard()
-    return data
+    return {**data, "source": "legacy_chat_analytics"}
 
 
 @app.get("/api/analytics/pageviews")
 async def analytics_pageviews(limit: int = 50):
     rows = await analytics_store.get_recent_pageviews(limit)
-    return {"total": len(rows), "pageviews": rows}
+    return {"total": len(rows), "pageviews": rows, "source": "legacy_chat_analytics"}
 
 
 @app.get("/api/analytics/visitors")
 async def analytics_visitors(limit: int = 50):
     rows = await analytics_store.get_visitor_sessions(limit)
-    return {"total": len(rows), "visitors": rows}
+    return {"total": len(rows), "visitors": rows, "source": "legacy_chat_analytics"}
 
 
 @app.get("/api/analytics/signals")
 async def analytics_signals(dias: int = 7):
-    return await analytics_store.get_signal_summary(dias)
+    # NOTA: este "signals" es el resumen histórico de la analítica del chat en
+    # PostgreSQL (legacy), NO M.A.T.I.A.S. Signals (AWS). Se etiqueta
+    # inequívocamente para no confundir fuentes.
+    data = await analytics_store.get_signal_summary(dias)
+    return {**data, "source": "legacy_chat_analytics"}
 
 
 # ─── Leads endpoint (para Amelia) ──────────────────────────────────────────
