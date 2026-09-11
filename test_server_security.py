@@ -175,6 +175,37 @@ class SecurityMiddlewareTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(response.json()["accepted"])
             mock_log.assert_not_awaited()
 
+    async def test_associate_without_consent_is_rejected(self):
+        with patch.object(server.signals_association, "record_signals_association", new=AsyncMock()) as mock:
+            response = await self.client.post(
+                "/api/signals/associate",
+                json={
+                    "chat_session_id": "chat-1",
+                    "signals_visitor_id": "vis-1",
+                    "signals_session_id": "ses-1",
+                    "consent": False,
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(response.json()["associated"])
+            mock.assert_not_awaited()
+
+    async def test_associate_with_consent_is_stored(self):
+        with patch.object(server.signals_association, "record_signals_association", new=AsyncMock()) as mock:
+            response = await self.client.post(
+                "/api/signals/associate",
+                json={
+                    "chat_session_id": "chat-1",
+                    "signals_visitor_id": "vis-1",
+                    "signals_session_id": "ses-1",
+                    "consent": True,
+                    "consent_version": "v1",
+                },
+            )
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(response.json()["associated"])
+            mock.assert_awaited_once()
+
 
 if __name__ == "__main__":
     unittest.main()

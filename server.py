@@ -27,6 +27,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
 import analytics_store
 import database
 import lead_service as leads
+import signals_association
 
 try:
     from agent_prompt import SYSTEM_PROMPT
@@ -335,6 +336,7 @@ async def lifespan(app: FastAPI):
     await database.init_db()
     await leads.init_leads_db()
     await analytics_store.init_analytics_db()
+    await signals_association.init_signals_associations()
     def cleanup_loop():
         while True:
             time.sleep(300)
@@ -450,6 +452,17 @@ class AnalyticsEvent(BaseModel):
     element: Optional[str] = Field(default=None, max_length=500)
     url: Optional[str] = Field(default=None, max_length=2048)
     metadata: Optional[str] = Field(default=None, max_length=4000)
+    consent: bool = False
+    consent_version: Optional[str] = Field(default=None, max_length=32)
+
+
+class SignalsAssociationRequest(BaseModel):
+    chat_session_id: str = Field(min_length=1, max_length=100)
+    signals_visitor_id: str = Field(min_length=1, max_length=100)
+    signals_session_id: str = Field(min_length=1, max_length=100)
+    # El tenant se resuelve en servidor desde configuración autorizada, no desde
+    # un valor libre del cliente. Este campo se acepta pero no es fuente de verdad.
+    signals_tenant_id: Optional[str] = Field(default=None, max_length=100)
     consent: bool = False
     consent_version: Optional[str] = Field(default=None, max_length=32)
 
@@ -705,6 +718,36 @@ async def analytics_signals(dias: int = 7):
     # inequívocamente para no confundir fuentes.
     data = await analytics_store.get_signal_summary(dias)
     return {**data, "source": "legacy_chat_analytics"}
+
+
+# ─── Asociación Signals ↔ chat (Sección 10) ────────────────────────────────
+
+SIGNALS_TENANT_ID = os.environ.get("SIGNALS_TENANT_ID", "").strip()
+
+
+@app.post("/api/signals/associate")
+async def signals_associate(req: SignalsAssociationRequest):
+    # Solo se asocia con consentimiento explícito. Sin consentimiento no se
+    # vincula el contexto analítico con la conversación.
+    if not req.consent:
+        return {"status": "ok", "associated": False, "reason": "consent_not_granted"}
+    # El tenant se resuelve desde configuración autorizada (SIGNALS_TENANT_ID),
+    # no desde un valor libre enviado por el cliente.
+    tenant_id = SIGNALS_TENANT_ID or (req.signals_tenant_id or "")
+    await signals_association.record_signals_association(
+        chat_session_id=req.chat_session_id,
+        signals_tenant_id=tenant_id,
+        signals_visitor_id=req.signals_visitor_id,
+        signals_session_id=req.signals_session_id,
+        consent_version=req.consent_version or "",
+    )
+    return {"status": "ok", "associated": True, "tenant_id": tenant_id}
+
+
+@app.get("/api/signals/association/{chat_session_id}")
+async def signals_association_lookup(chat_session_id: str):
+    row = await signals_association.get_signals_association(chat_session_id)
+    return {"association": row}
 
 
 # ─── Leads endpoint (para Amelia) ──────────────────────────────────────────
