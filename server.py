@@ -612,9 +612,10 @@ async def _chat_impl(req: ChatRequest, request: Request):
             resp.raise_for_status()
             data = resp.json()
     except httpx.HTTPStatusError as e:
-        raise HTTPException(status_code=502, detail=f"Error del modelo: {e.response.text[:500]}")
+        # Nunca exponer el texto del proveedor ni el nombre del modelo al visitante.
+        raise HTTPException(status_code=502, detail="No pude procesar tu solicitud en este momento. Intenta de nuevo en unos segundos.")
     except httpx.RequestError as e:
-        raise HTTPException(status_code=502, detail=f"Error de conexion con DeepSeek: {str(e)}")
+        raise HTTPException(status_code=502, detail="No pude procesar tu solicitud en este momento. Intenta de nuevo en unos segundos.")
 
     content = data["choices"][0]["message"]["content"]
     session.add_message("assistant", content)
