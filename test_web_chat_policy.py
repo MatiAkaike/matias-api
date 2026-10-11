@@ -143,7 +143,7 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
             '--- Precios oficiales ---\nEl plan Starter vale 999 USD.\n\n'
             '--- Descripción institucional ---\nAkaike desarrolla modelos de scoring personalizados.'
         )
-        response = await self.ask('¿Qué soluciones ofrece Akaike?')
+        response = await self.ask('¿Cómo ayudan los modelos de scoring personalizados de Akaike?')
         self.assertEqual(response.status_code, 200)
         call = self.model_post.await_args
         assert call is not None
@@ -252,6 +252,105 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(self.model_post.await_count, before + 1)
                 self.assertEqual(response.json()['reply'], self.model_reply)
 
+
+    async def test_full_portfolio_overview_in_both_public_routes(self):
+        products = ('Credit Score', 'Copilot', 'Signals', 'Flows', 'Data B.I.', 'Credit Agent', 'Training Center', 'Brain')
+        for route in ('/api/chat', '/api/presentacion'):
+            response = await self.client.post(route, json={
+                'message': '¿Cuál es el portafolio completo de servicios de Akaike?', 'session_id': 'qa-portfolio', 'slide': -1,
+            })
+            self.assertEqual(response.status_code, 200)
+            reply = response.json()['reply']
+            for product in products:
+                self.assertIn(product, reply)
+            self.assertIn(server.MEETING_URL, reply)
+            self.assertNotIn('$', reply)
+        self.model_post.assert_not_awaited()
+
+    async def test_updated_portfolio_reaches_model_with_availability_limits(self):
+        response = await self.ask('¿En qué se diferencian Credit Agent y Copilot?')
+        self.assertEqual(response.status_code, 200)
+        call = self.model_post.await_args
+        assert call is not None
+        sent = json.loads(call.kwargs['json']['messages'][-1]['content'])['reference_context']
+        for term in ('M.A.T.I.A.S. OS', 'Credit Agent', 'Copilot', 'Flows', 'Data B.I.', 'Training Center', 'MCP', 'terminal'):
+            self.assertIn(term, sent)
+        self.assertIn('capacidades actuales y propuestas', sent)
+        self.assertIn('autorización expresa', sent)
+        self.assertNotIn('todos los planes', sent.lower())
+
+    async def test_quote_requests_always_invite_booking_without_model(self):
+        for route in ('/api/chat', '/api/presentacion'):
+            for question in ('Cotízame Credit Agent', 'Necesito un presupuesto de Flows', 'Quiero una cotización de Signals'):
+                with self.subTest(route=route, question=question):
+                    response = await self.client.post(route, json={
+                        'message': question, 'session_id': 'qa-quote', 'slide': -1,
+                    })
+                    self.assertEqual(response.status_code, 200)
+                    self.assertIn('reunión', response.json()['reply'])
+                    self.assertIn(server.MEETING_URL, response.json()['reply'])
+        self.model_post.assert_not_awaited()
+
+    async def test_specific_product_question_is_not_replaced_by_generic_catalog(self):
+        question = '¿Qué servicios ofrece Credit Agent dentro de su portafolio?'
+        response = await self.ask(question)
+        self.assertEqual(response.status_code, 200)
+        self.model_post.assert_awaited_once()
+        self.assertEqual(response.json()['reply'], self.model_reply)
+
+    async def test_portfolio_shortcut_does_not_capture_other_companies(self):
+        for question in ('¿Qué servicios ofrece AWS?', '¿Qué productos tiene Microsoft?', '¿Cuál es el portafolio de otra empresa?'):
+            with self.subTest(question=question):
+                self.assertFalse(server.public_portfolio.is_overview_question(question))
+        for question in ('¿Qué servicios ofrecen?', '¿Cuál es el portafolio completo de servicios de Akaike?'):
+            self.assertTrue(server.public_portfolio.is_overview_question(question))
+
+    async def test_demo_has_priority_over_portfolio_summary(self):
+        for route in ('/api/chat', '/api/presentacion'):
+            response = await self.client.post(route, json={
+                'message': 'Quiero una demo del portafolio', 'session_id': 'qa-demo-portfolio', 'slide': -1,
+            })
+            self.assertEqual(response.status_code, 200)
+            self.assertIn('Amelia', response.json()['reply'])
+            self.assertIn(server.MEETING_URL, response.json()['reply'])
+            self.assertNotIn('seis productos', response.json()['reply'])
+        self.model_post.assert_not_awaited()
+
+    async def test_budget_analysis_is_not_a_quote_request(self):
+        for route in ('/api/chat', '/api/presentacion'):
+            for question in ('¿Copilot puede analizar un presupuesto familiar para evaluar la capacidad de pago?', '¿Puede interpretar el presupuesto del solicitante Copilot?'):
+                with self.subTest(route=route, question=question), patch.dict('os.environ', {'DEEPSEEK_API_KEY': 'local-test-placeholder'}):
+                    before = self.model_post.await_count
+                    response = await self.client.post(route, json={
+                        'message': question, 'session_id': 'qa-budget-analysis', 'slide': -1,
+                    })
+                    self.assertEqual(response.status_code, 200)
+                    self.assertEqual(self.model_post.await_count, before + 1)
+                    self.assertNotIn('cotización', response.json()['reply'])
+
+    async def test_presentation_knows_new_products_without_graph_or_slide(self):
+        with patch.dict('os.environ', {'DEEPSEEK_API_KEY': 'local-test-placeholder'}), patch(
+            'oscar_graph_runtime.search', return_value=('', [])
+        ):
+            response = await self.client.post('/api/presentacion', json={
+                'message': '¿Qué hace Credit Agent con mi ERP?', 'session_id': 'qa-portfolio', 'slide': -1,
+            })
+        self.assertEqual(response.status_code, 200)
+        self.model_post.assert_awaited_once()
+        call = self.model_post.await_args
+        assert call is not None
+        sent = call.kwargs['json']['messages'][-1]['content']
+        self.assertIn('Credit Agent', sent)
+        self.assertIn('ERP', sent)
+
+    async def test_presentation_preserves_public_product_names(self):
+        self.model_reply = 'Credit Agent complementa a Copilot y Credit Score; Training Center aporta conocimiento institucional.'
+        with patch.dict('os.environ', {'DEEPSEEK_API_KEY': 'local-test-placeholder'}):
+            response = await self.client.post('/api/presentacion', json={
+                'message': '¿Cómo se complementan Credit Agent y Copilot?', 'session_id': 'qa-products', 'slide': -1,
+            })
+        for name in ('Credit Agent', 'Credit Score', 'Training Center'):
+            self.assertIn(name, response.json()['reply'])
 
     async def test_explicit_demo_keeps_calendar_and_contact_capture(self):
         response = await self.ask('Quiero una demo para mi cooperativa')

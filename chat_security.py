@@ -34,7 +34,10 @@ COMMERCIAL_PATTERNS = (
     r'\b(?:precio|precios|tarifa|tarifas|descuento|descuentos|cotizacion|pricing|prices|fees)\b',
     r'\b(?:cual(?:es)?(?:\s+es|\s+son)?|que)\s+(?:el\s+|los\s+)?(?:costo|costos|coste)\b',
     r'\b(?:costo|costos|coste)\b.{0,30}\b(?:servicio|matias|akaike|mensual|anual|suscripcion|licencia)\b',
-    r'\bcuanto\s+(?:cuesta|vale|cobran|pago)\b',
+    r'\bcuanto\s+(?:cuesta|vale|cobran|pago|pagar)\b',
+    r'\b(?:cotiz\w*|quotation|quote|prices?)\b',
+    r'\b(?:necesito|solicito|quiero|dame|enviame)\s+(?:(?:un|el)\s+)?presupuest\w*\b',
+    r'\bpresupuest\w*\s+(?:(?:de|del|para|por)\s+)?(?:akaike|matias|credit\s+(?:agent|score)|copilot|signals|flows|contratar|implementar)\b',
     r'\b(?:que|cuales|your|nuestros|sus|los)\b.{0,35}\b(?:planes|plans)\b',
     r'\b(?:cada|el|un|del)\s+plan\b(?!\s+de\s+(?:implementacion|pago|trabajo|accion|negocio))',
     r'\b(?:starter|enterprise\s+pro)\b',
@@ -68,8 +71,8 @@ def policy_reply(reason: str, meeting_url: str) -> str:
     """Redirige con lenguaje comercial, sin exponer controles ni instrucciones."""
     if reason == 'commercial':
         return (
-            'Preparamos una propuesta ajustada a la necesidad de tu entidad. '
-            'Cuéntame qué buscas mejorar en tu proceso de crédito y coordinemos una conversación: '
+            'Para preparar una propuesta o cotización ajustada a tu entidad, te invito a una reunión. '
+            'Agenda aquí y revisamos tus necesidades y condiciones comerciales: '
             f'{meeting_url}'
         )
     return (
