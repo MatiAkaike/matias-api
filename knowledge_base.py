@@ -43,14 +43,12 @@ def _ngrams(tokens: list[str], n: int = 2) -> list[str]:
 
 
 def _chunk_text(text: str) -> list[str]:
-    """Divide texto en chunks con overlap."""
-    words = text.split()
+    """Conserva límites de párrafo para excluir datos sensibles sin perder valor comercial."""
     chunks = []
-    i = 0
-    while i < len(words):
-        chunk = " ".join(words[i:i + CHUNK_SIZE])
-        chunks.append(chunk)
-        i += CHUNK_SIZE - OVERLAP
+    for paragraph in re.split(r'\n\s*\n', text):
+        words = paragraph.split()
+        for i in range(0, len(words), CHUNK_SIZE - OVERLAP):
+            chunks.append(" ".join(words[i:i + CHUNK_SIZE]))
     return chunks
 
 
@@ -143,7 +141,7 @@ def _bm25_chunk(query_tokens, query_bigrams, chunk):
     return score
 
 
-def search_relevant(question: str, slide_index: int = -1, max_chars: int = 12000) -> str:
+def search_relevant(question: str, slide_index: int = -1, max_chars: int = 12000, public_only: bool = False) -> str:
     load_knowledge_base()
     if not _chunks:
         return ""
@@ -156,6 +154,14 @@ def search_relevant(question: str, slide_index: int = -1, max_chars: int = 12000
     # Score cada chunk
     scored = []
     for ch in _chunks:
+        if public_only:
+            import chat_security
+            if re.search(r'precios|tarifas|planes|cotizaciones', chat_security.normalized_text(ch['source'])):
+                continue
+            public_text = chat_security.public_context(ch['text'])
+            if not public_text:
+                continue
+            ch = {**ch, 'text': public_text}
         s = _bm25_chunk(q_tokens, q_bigrams, ch)
         if s <= 0:
             continue
