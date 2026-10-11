@@ -19,6 +19,7 @@ from typing import Any
 import httpx
 
 import database
+import chat_security
 
 logger = logging.getLogger("matias.leads")
 DATABASE_URL = database._build_dsn()
@@ -194,8 +195,13 @@ async def save_lead(
 ) -> dict[str, Any] | None:
     """Acumula datos compartidos en varios turnos y hace upsert por sesión."""
     conversation = await _conversation(session_id, conn=conn)
-    full_text = "\n".join(item["content"] for item in conversation if item["role"] == "user")
-    data = _extract_lead_data(full_text or text)
+    # Un ataque antiguo se conserva como evidencia, pero no origina un contacto comercial.
+    full_text = "\n".join(
+        item["content"] for item in conversation
+        if item["role"] == "user" and chat_security.classify_input(item["content"]) != "injection"
+    )
+    fallback_text = text if chat_security.classify_input(text) != "injection" else ""
+    data = _extract_lead_data(full_text or fallback_text)
     if not data:
         return None
 
