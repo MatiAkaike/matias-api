@@ -43,12 +43,19 @@ class EndpointTests(unittest.TestCase):
         import server
         self.server = server
         self.client = TestClient(server.app)  # sin lifespan: no toca la base real
+        import anti_bots, base64, hashlib, json
+        def cab():
+            r = anti_bots.emitir_reto(); r["emitido"] -= 10
+            r["firma"] = anti_bots._firma(r["salt"], r["reto"], r["expira"], r["emitido"])
+            n = next(n for n in range(r["max"] + 1) if hashlib.sha256(f"{r['salt']}{n}".encode()).hexdigest() == r["reto"])
+            return {"Origin": "https://www.akaike.lat", "X-Reto": base64.b64encode(json.dumps({**r, "numero": n}).encode()).decode()}
+        self.cab = cab
 
     def test_lead_valido_se_guarda(self):
         with patch.object(pa, "_dominio_recibe_correo", AsyncMock(return_value=True)), \
              patch.object(pa, "guardar_lead", AsyncMock()) as guardar, \
              patch.object(self.server.database, "log_presentation_event", AsyncMock()):
-            r = self.client.post("/api/presentacion/lead", json={
+            r = self.client.post("/api/presentacion/lead", headers=self.cab(), json={
                 "session_id": "pres-prueba-1", "nombre": "Laura Pérez", "correo": "laura@entidad.com",
                 "whatsapp": "3001234567", "pais": "CO", "autoriza_datos": True, "origen": "linkedin"})
         self.assertEqual(r.status_code, 200)
@@ -59,7 +66,7 @@ class EndpointTests(unittest.TestCase):
     def test_lead_invalido_devuelve_errores_por_campo(self):
         with patch.object(pa, "_dominio_recibe_correo", AsyncMock(return_value=True)), \
              patch.object(pa, "guardar_lead", AsyncMock()) as guardar:
-            r = self.client.post("/api/presentacion/lead", json={
+            r = self.client.post("/api/presentacion/lead", headers=self.cab(), json={
                 "session_id": "pres-prueba-2", "nombre": "L", "correo": "malo", "whatsapp": "12",
                 "pais": "CO", "autoriza_datos": False})
         self.assertEqual(r.status_code, 422)
