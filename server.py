@@ -28,7 +28,9 @@ load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
 import analytics_store
 import database
 import lead_service as leads
+import logging
 import presentacion_acceso
+import anti_bots
 import signals_association
 import chat_security
 import public_portfolio
@@ -369,6 +371,7 @@ async def protect_sensitive_routes(request: Request, call_next):
         "/api/presentacion": (20, "presentacion"),
         "/api/presentacion/event": (120, "presentacion_event"),
         "/api/presentacion/lead": (8, "presentacion_lead"),
+        "/api/presentacion/reto": (60, "presentacion_reto"),
         "/api/session/new": (30, "session"),
         "/api/analytics/pageview": (120, "analytics"),
         "/api/analytics/event": (120, "analytics"),
@@ -1025,6 +1028,13 @@ async def _persist_presentation_turn(
 async def presentacion_chat(req: PresentacionRequest, response: Response, request: Request):
     import oscar_graph_runtime
 
+    # Antibots: origen akaike.lat y reto de prueba de trabajo de un solo uso.
+    if not anti_bots.origen_valido(request.headers.get("Origin", ""), request.headers.get("Referer", "")):
+        return JSONResponse(status_code=403, content={"detail": "origen"})
+    ok_reto, motivo_reto = anti_bots.verificar(request.headers.get("X-Reto", ""))
+    if not ok_reto:
+        return JSONResponse(status_code=403, content={"detail": "reto", "motivo": motivo_reto})
+
     # Registrar IP, geografía y dispositivo de la sesión de presentación.
     client_context = await _get_client_context(request)
     client_ip = client_context["ip"]
@@ -1039,6 +1049,13 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
         )
         return await _persist_presentation_turn(
             req, quota_reply, "cuota", client_ip, client_ua
+        )
+
+    # Freno global: si el sitio entero pasa el tope de respuestas por hora, no se usa el modelo.
+    if not anti_bots.hay_cupo_global():
+        return await _persist_presentation_turn(
+            req, "En este momento tengo muchas consultas. Si quieres conocer más, agenda una reunión aquí:\n" + AGENDA_URL,
+            "cuota", client_ip, client_ua,
         )
 
     policy_reason = chat_security.classify_input(req.message)
@@ -1217,6 +1234,14 @@ async def presentacion_event(req: PresentacionEvent, request: Request):
 
 # ─── Acceso a la presentación completa (diapositiva 4 en adelante) ───────────
 
+@app.post("/api/presentacion/reto")
+async def presentacion_reto(request: Request):
+    """Reto de prueba de trabajo para el chat y el formulario (un solo uso, vence en 5 minutos)."""
+    if not anti_bots.origen_valido(request.headers.get("Origin", ""), request.headers.get("Referer", "")):
+        return JSONResponse(status_code=403, content={"detail": "origen"})
+    return anti_bots.emitir_reto()
+
+
 class PresentacionLead(PydanticBase):
     session_id: str = Field(..., min_length=6, max_length=80)
     nombre: str = Field(..., max_length=120)
@@ -1225,11 +1250,21 @@ class PresentacionLead(PydanticBase):
     pais: str = Field("CO", min_length=2, max_length=2)
     autoriza_datos: bool = False
     origen: str = Field("", max_length=300)
+    sitio_web: str = Field("", max_length=200)  # campo trampa: invisible para personas
 
 
 @app.post("/api/presentacion/lead")
 async def presentacion_lead(req: PresentacionLead, request: Request):
     """Valida y guarda los datos de quien quiere ver la presentación completa."""
+    if not anti_bots.origen_valido(request.headers.get("Origin", ""), request.headers.get("Referer", "")):
+        return JSONResponse(status_code=403, content={"detail": "origen"})
+    # El reto se pide al abrir el formulario: menos de 3 s entre abrirlo y enviarlo no es una persona.
+    ok_reto, motivo_reto = anti_bots.verificar(request.headers.get("X-Reto", ""), edad_minima=3)
+    if not ok_reto:
+        return JSONResponse(status_code=403, content={"detail": "reto", "motivo": motivo_reto})
+    if req.sitio_web.strip():
+        logging.getLogger("matias.presentacion").warning("Lead de presentación descartado por campo trampa (ip=%s)", _get_client_ip(request))
+        return {"ok": True, "nombre": ""}
     errores: dict[str, str] = {}
     nombre, e = presentacion_acceso.validar_nombre(req.nombre)
     if e: errores["nombre"] = e

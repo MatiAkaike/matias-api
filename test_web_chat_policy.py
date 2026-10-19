@@ -13,6 +13,9 @@ import server
 
 class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
+        # Estas pruebas cubren la política del chat, no el antibots (ver test_anti_bots.py).
+        for nombre, valor in (("origen_valido", lambda *a, **k: True), ("verificar", lambda *a, **k: (True, "ok")), ("hay_cupo_global", lambda: True)):
+            p = patch.object(server.anti_bots, nombre, valor); p.start(); self.addCleanup(p.stop)
         server.sessions.clear()
         server.rate_tracker.clear()
         with server._chat_quota_lock:
