@@ -694,6 +694,8 @@ async def track_pageview(req: AnalyticsPageView, request: Request):
     # operativos del chat/seguridad se mantienen en sus rutas propias.
     if not req.consent:
         return {"status": "ok", "accepted": False, "reason": "consent_not_granted"}
+    if await presentacion_acceso.es_interna(_get_client_ip(request)):
+        return {"status": "ok", "accepted": False, "reason": "interno"}  # Akaike no se cuenta
     client_context = await _get_client_context(request)
     client_context.update({
         "timezone": req.timezone or client_context["timezone"],
@@ -725,6 +727,8 @@ async def track_event(req: AnalyticsEvent, request: Request):
     if not req.consent:
         return {"status": "ok", "accepted": False, "reason": "consent_not_granted"}
     client_ip = _get_client_ip(request)
+    if await presentacion_acceso.es_interna(client_ip):
+        return {"status": "ok", "accepted": False, "reason": "interno"}
     await analytics_store.log_event(req.session_id, req.event_type, req.element or "", req.url or "", req.metadata, ip=client_ip)
     return {"status": "ok", "accepted": True}
 
@@ -882,6 +886,7 @@ class PresentacionRequest(PydanticBase):
     session_id: str = Field(default="presentacion", min_length=1, max_length=100, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$')
     name: str = Field(default="Invitado", max_length=100)
     slide: int = Field(default=-1, ge=-1, le=50)  # índice de diapositiva actual (0-based)
+    interno: bool = False  # navegador marcado como de Akaike: no se registra en estadísticas
 
 class PresentacionResponse(PydanticBase):
     reply: str
@@ -977,6 +982,8 @@ async def _persist_presentation_turn(
 ) -> PresentacionResponse:
     """Persiste el turno completo y registra el lead antes de confirmar éxito."""
     reply = chat_security.guard_reply(reply, AGENDA_URL, PRESENTACION_SYSTEM)
+    if req.interno:  # Akaike probando su propia presentación: se responde sin dejar estadística
+        return PresentacionResponse(reply=reply, session_id=req.session_id, source=source, sources=(sources or [])[:5])
     pool = await database._get_pg_pool()
 
     async def persist(conn=None):
@@ -1039,10 +1046,14 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     client_context = await _get_client_context(request)
     client_ip = client_context["ip"]
     client_ua = client_context["user_agent"]
-    await _touch_session_safe(req.session_id, client_context, source="presentacion")
+    red_interna = await presentacion_acceso.es_interna(client_ip)
+    if red_interna:
+        req.interno = True
+    if not req.interno:
+        await _touch_session_safe(req.session_id, client_context, source="presentacion")
 
-    # LÍMITE DE CUOTA: evita conversaciones indefinidas que consumen tokens.
-    if not _consume_chat_quota(client_ip):
+    # LÍMITE DE CUOTA: evita conversaciones indefinidas que consumen tokens (las redes internas no tienen cuota).
+    if not red_interna and not _consume_chat_quota(client_ip):
         quota_reply = (
             "Has superado tu cuota de chat de esta sesión. "
             "Si quieres conocer más, agenda una reunión aquí:\n" + AGENDA_URL
@@ -1052,7 +1063,7 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
         )
 
     # Freno global: si el sitio entero pasa el tope de respuestas por hora, no se usa el modelo.
-    if not anti_bots.hay_cupo_global():
+    if not red_interna and not anti_bots.hay_cupo_global():
         return await _persist_presentation_turn(
             req, "En este momento tengo muchas consultas. Si quieres conocer más, agenda una reunión aquí:\n" + AGENDA_URL,
             "cuota", client_ip, client_ua,
@@ -1215,6 +1226,8 @@ async def presentacion_event(req: PresentacionEvent, request: Request):
     response.headers["Access-Control-Allow-Origin"] = "*"
     
     ip = _get_client_ip(request)
+    if await presentacion_acceso.es_interna(ip):
+        return {"ok": True}  # Akaike no se cuenta en las estadísticas de la presentación
     ua = request.headers.get("User-Agent", "")
     data = {}
     if req.seconds is not None:
@@ -1295,7 +1308,10 @@ async def presentacion_lead(req: PresentacionLead, request: Request):
 @app.get("/api/presentacion/acceso")
 async def presentacion_acceso_enlace(request: Request, p: str = ""):
     """Enlace personal de Oscar: abre la presentación completa sin pedir datos, desde máximo 3 IP distintas."""
-    cliente, motivo = await presentacion_acceso.usar_enlace(p, _get_client_ip(request))
+    ip = _get_client_ip(request)
+    if await presentacion_acceso.es_interna(ip):  # red de Akaike: entra sin datos y sin gastar IP del enlace
+        return {"valido": True, "cliente": "Akaike", "motivo": "interno", "interno": True}
+    cliente, motivo = await presentacion_acceso.usar_enlace(p, ip)
     return {"valido": bool(cliente), "cliente": cliente or "", "motivo": motivo}
 
 
@@ -1315,6 +1331,35 @@ async def desactivar_enlace_presentacion(token: str):
     if not await presentacion_acceso.desactivar_enlace(token):
         raise HTTPException(status_code=404, detail="Enlace no encontrado")
     return {"ok": True, "token": token}
+
+
+class RedInterna(PydanticBase):
+    red: str = Field(..., min_length=3, max_length=64)
+    nota: str = Field(default="", max_length=120)
+
+
+@app.post("/api/admin/presentacion/redes-internas")
+async def agregar_red_interna(req: RedInterna):
+    try:
+        red = await presentacion_acceso.agregar_red_interna(req.red, req.nota)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Red no válida: {exc}")
+    return {"ok": True, "red": red}
+
+
+@app.get("/api/admin/presentacion/redes-internas")
+async def listar_redes_internas():
+    return {"redes": await presentacion_acceso.listar_redes_internas()}
+
+
+@app.post("/api/admin/presentacion/redes-internas/quitar")
+async def quitar_red_interna(req: RedInterna):
+    try:
+        if not await presentacion_acceso.quitar_red_interna(req.red):
+            raise HTTPException(status_code=404, detail="Esa red no está registrada")
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"Red no válida: {exc}")
+    return {"ok": True}
 
 
 @app.get("/api/admin/presentacion/enlaces")
