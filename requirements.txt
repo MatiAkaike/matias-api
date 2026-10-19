@@ -5,3 +5,5 @@ httpx>=0.28.0
 aiosqlite>=0.20.0
 psycopg2-binary>=2.9.10
 asyncpg>=0.30.0
+phonenumbers>=8.13.0
+dnspython>=2.6.0
