@@ -11,6 +11,7 @@ administración y no pide datos.
 
 from __future__ import annotations
 
+import os
 import re
 import secrets
 from typing import Any
@@ -23,6 +24,8 @@ from phonenumbers import NumberParseException, PhoneNumberType
 import database
 
 FUENTE = "Presentación M.A.T.I.A.S."
+# Un enlace personal se abre desde máximo estas IP distintas; desde una nueva se piden los datos.
+MAX_IPS = int(os.getenv("PRESENTACION_ENLACE_MAX_IPS", "3"))
 
 # Proveedores de correo temporal o desechable más usados (se bloquean; Gmail, Hotmail, etc. sí se aceptan).
 DESECHABLES = frozenset({
@@ -105,6 +108,17 @@ async def init_db() -> None:
             )
         """)
         await conn.execute("ALTER TABLE presentacion_enlaces ENABLE ROW LEVEL SECURITY")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS presentacion_enlace_ips (
+                token TEXT NOT NULL REFERENCES presentacion_enlaces(token) ON DELETE CASCADE,
+                ip TEXT NOT NULL,
+                primera TIMESTAMPTZ DEFAULT NOW(),
+                ultima TIMESTAMPTZ DEFAULT NOW(),
+                usos INTEGER DEFAULT 1,
+                PRIMARY KEY (token, ip)
+            )
+        """)
+        await conn.execute("ALTER TABLE presentacion_enlace_ips ENABLE ROW LEVEL SECURITY")
 
 
 async def crear_enlace(cliente: str) -> str:
@@ -119,19 +133,40 @@ async def listar_enlaces(limit: int = 100) -> list[dict[str, Any]]:
     pool = await database._get_pg_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT token, cliente, creado, usos, ultimo_uso, activo FROM presentacion_enlaces ORDER BY creado DESC LIMIT $1", limit)
-    return [{**dict(r), "creado": str(r["creado"]), "ultimo_uso": str(r["ultimo_uso"] or "")} for r in rows]
+            """SELECT e.token, e.cliente, e.creado, e.usos, e.ultimo_uso, e.activo,
+                      (SELECT COUNT(*) FROM presentacion_enlace_ips i WHERE i.token = e.token) AS ips
+               FROM presentacion_enlaces e ORDER BY e.creado DESC LIMIT $1""", limit)
+    return [{**dict(r), "creado": str(r["creado"]), "ultimo_uso": str(r["ultimo_uso"] or ""), "max_ips": MAX_IPS} for r in rows]
 
 
-async def usar_enlace(token: str) -> str | None:
-    """Devuelve el cliente si el enlace es válido y activo, y cuenta el uso."""
-    if not token or not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", token):
-        return None
+async def desactivar_enlace(token: str) -> bool:
     pool = await database._get_pg_pool()
     async with pool.acquire() as conn:
-        row = await conn.fetchrow(
-            "UPDATE presentacion_enlaces SET usos = usos + 1, ultimo_uso = NOW() WHERE token=$1 AND activo RETURNING cliente", token)
-    return row["cliente"] if row else None
+        r = await conn.execute("UPDATE presentacion_enlaces SET activo = FALSE WHERE token=$1", token)
+    return r.endswith(" 1")
+
+
+async def usar_enlace(token: str, ip: str = "") -> tuple[str | None, str]:
+    """Devuelve (cliente, motivo). Válido si el enlace está activo y la IP es una de las primeras MAX_IPS."""
+    if not token or not re.fullmatch(r"[A-Za-z0-9_-]{8,40}", token):
+        return None, "invalido"
+    ip = (ip or "desconocida")[:64]
+    pool = await database._get_pg_pool()
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            enlace = await conn.fetchrow(
+                "SELECT cliente FROM presentacion_enlaces WHERE token=$1 AND activo FOR UPDATE", token)
+            if not enlace:
+                return None, "invalido"
+            conocida = await conn.fetchval(
+                "UPDATE presentacion_enlace_ips SET ultima = NOW(), usos = usos + 1 WHERE token=$1 AND ip=$2 RETURNING 1", token, ip)
+            if not conocida:
+                usadas = await conn.fetchval("SELECT COUNT(*) FROM presentacion_enlace_ips WHERE token=$1", token)
+                if usadas >= MAX_IPS:
+                    return None, "limite"
+                await conn.execute("INSERT INTO presentacion_enlace_ips (token, ip) VALUES ($1, $2)", token, ip)
+            await conn.execute("UPDATE presentacion_enlaces SET usos = usos + 1, ultimo_uso = NOW() WHERE token=$1", token)
+    return enlace["cliente"], "ok"
 
 
 async def guardar_lead(session_id: str, nombre: str, correo: str, whatsapp: str, pais: str, ip: str, contexto: str) -> None:
