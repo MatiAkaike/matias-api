@@ -67,10 +67,18 @@ class EndpointTests(unittest.TestCase):
         guardar.assert_not_called()
 
     def test_enlace_personal(self):
-        with patch.object(pa, "usar_enlace", AsyncMock(return_value="Banco Demo")):
-            self.assertEqual(self.client.get("/api/presentacion/acceso?p=abcdefgh123").json(), {"valido": True, "cliente": "Banco Demo"})
-        with patch.object(pa, "usar_enlace", AsyncMock(return_value=None)):
-            self.assertEqual(self.client.get("/api/presentacion/acceso?p=x").json(), {"valido": False, "cliente": ""})
+        with patch.object(pa, "usar_enlace", AsyncMock(return_value=("Banco Demo", "ok"))):
+            self.assertEqual(self.client.get("/api/presentacion/acceso?p=abcdefgh123").json(), {"valido": True, "cliente": "Banco Demo", "motivo": "ok"})
+        with patch.object(pa, "usar_enlace", AsyncMock(return_value=(None, "limite"))) as usar:
+            self.assertEqual(self.client.get("/api/presentacion/acceso?p=abcdefgh123").json(), {"valido": False, "cliente": "", "motivo": "limite"})
+            self.assertEqual(usar.call_args.args[0], "abcdefgh123")  # la IP del visitante va como segundo argumento
+
+    def test_token_con_formato_invalido_no_consulta_la_base(self):
+        self.assertEqual(asyncio.run(pa.usar_enlace("x", "1.2.3.4")), (None, "invalido"))
+
+    def test_desactivar_exige_token_admin(self):
+        r = self.client.post("/api/admin/presentacion/enlaces/abcdefgh123/desactivar")
+        self.assertIn(r.status_code, (401, 503))
 
     def test_crear_enlaces_exige_token_admin(self):
         r = self.client.post("/api/admin/presentacion/enlaces", json={"cliente": "Banco Demo"})

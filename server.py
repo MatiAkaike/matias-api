@@ -1253,10 +1253,10 @@ async def presentacion_lead(req: PresentacionLead, request: Request):
 
 
 @app.get("/api/presentacion/acceso")
-async def presentacion_acceso_enlace(p: str = ""):
-    """Enlace personal de Oscar: si es válido, la presentación se abre completa sin pedir datos."""
-    cliente = await presentacion_acceso.usar_enlace(p)
-    return {"valido": bool(cliente), "cliente": cliente or ""}
+async def presentacion_acceso_enlace(request: Request, p: str = ""):
+    """Enlace personal de Oscar: abre la presentación completa sin pedir datos, desde máximo 3 IP distintas."""
+    cliente, motivo = await presentacion_acceso.usar_enlace(p, _get_client_ip(request))
+    return {"valido": bool(cliente), "cliente": cliente or "", "motivo": motivo}
 
 
 class EnlacePresentacion(PydanticBase):
@@ -1266,7 +1266,15 @@ class EnlacePresentacion(PydanticBase):
 @app.post("/api/admin/presentacion/enlaces")
 async def crear_enlace_presentacion(req: EnlacePresentacion):
     token = await presentacion_acceso.crear_enlace(req.cliente)
-    return {"cliente": req.cliente.strip(), "token": token, "url": f"https://www.akaike.lat/presentacion?p={token}"}
+    return {"cliente": req.cliente.strip(), "token": token, "url": f"https://www.akaike.lat/presentacion?p={token}",
+            "max_ips": presentacion_acceso.MAX_IPS}
+
+
+@app.post("/api/admin/presentacion/enlaces/{token}/desactivar")
+async def desactivar_enlace_presentacion(token: str):
+    if not await presentacion_acceso.desactivar_enlace(token):
+        raise HTTPException(status_code=404, detail="Enlace no encontrado")
+    return {"ok": True, "token": token}
 
 
 @app.get("/api/admin/presentacion/enlaces")
