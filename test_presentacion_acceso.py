@@ -102,5 +102,58 @@ class EndpointTests(unittest.TestCase):
         self.assertIn(r.status_code, (401, 503))
 
 
+class RedesInternasTests(unittest.TestCase):
+    def setUp(self):
+        from fastapi.testclient import TestClient
+        import server
+        self.server = server
+        self.client = TestClient(server.app)
+        pa._redes_cache = (0.0, [])
+
+    def tearDown(self):
+        pa._redes_cache = (0.0, [])
+
+    def test_normalizar_red(self):
+        self.assertEqual(pa.normalizar_red("206.62.142.99/24"), "206.62.142.0/24")
+        self.assertEqual(pa.normalizar_red("206.62.142.99"), "206.62.142.99/32")
+        with self.assertRaises(ValueError):
+            pa.normalizar_red("0.0.0.0/0")
+        with self.assertRaises(ValueError):
+            pa.normalizar_red("no-es-ip")
+
+    def test_es_interna_por_variable(self):
+        with patch.dict("os.environ", {"PRESENTACION_REDES_INTERNAS": "206.62.142.0/24"}), \
+             patch.object(pa.database, "_get_pg_pool", AsyncMock(return_value=None)):
+            self.assertTrue(asyncio.run(pa.es_interna("206.62.142.254")))
+            self.assertFalse(asyncio.run(pa.es_interna("206.62.143.1")))
+            self.assertFalse(asyncio.run(pa.es_interna("basura")))
+
+    def test_acceso_interno_no_gasta_ip_del_enlace(self):
+        with patch.object(pa, "es_interna", AsyncMock(return_value=True)), \
+             patch.object(pa, "usar_enlace", AsyncMock()) as usar:
+            d = self.client.get("/api/presentacion/acceso?p=abcdefgh123").json()
+        self.assertEqual(d, {"valido": True, "cliente": "Akaike", "motivo": "interno", "interno": True})
+        usar.assert_not_called()
+
+    def test_eventos_internos_no_se_registran(self):
+        with patch.object(pa, "es_interna", AsyncMock(return_value=True)), \
+             patch.object(self.server.database, "log_presentation_event", AsyncMock()) as log:
+            r = self.client.post("/api/presentacion/event", json={"session_id": "pres-x", "event_type": "slide_view", "slide": 1})
+        self.assertEqual(r.json(), {"ok": True})
+        log.assert_not_called()
+
+    def test_turno_interno_no_se_persiste(self):
+        req = self.server.PresentacionRequest(message="hola", session_id="pres-interno", interno=True)
+        with patch.object(self.server.database, "log_interaction", AsyncMock()) as log, \
+             patch.object(self.server.database, "_get_pg_pool", AsyncMock(return_value=None)):
+            r = asyncio.run(self.server._persist_presentation_turn(req, "respuesta", "grafo_publico", "206.62.142.1", "ua"))
+        self.assertEqual(r.reply.strip()[:9], "respuesta")
+        log.assert_not_called()
+
+    def test_redes_internas_exigen_token_admin(self):
+        self.assertIn(self.client.get("/api/admin/presentacion/redes-internas").status_code, (401, 503))
+        self.assertIn(self.client.post("/api/admin/presentacion/redes-internas", json={"red": "1.2.3.0/24"}).status_code, (401, 503))
+
+
 if __name__ == "__main__":
     unittest.main()

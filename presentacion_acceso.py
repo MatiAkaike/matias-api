@@ -11,9 +11,11 @@ administración y no pide datos.
 
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
 import secrets
+import time
 from typing import Any
 
 import dns.asyncresolver
@@ -26,6 +28,10 @@ import database
 FUENTE = "Presentación M.A.T.I.A.S."
 # Un enlace personal se abre desde máximo estas IP distintas; desde una nueva se piden los datos.
 MAX_IPS = int(os.getenv("PRESENTACION_ENLACE_MAX_IPS", "3"))
+# Redes de Akaike (p. ej. la de Oscar, con IP dinámica): pasan la puerta sin datos, no gastan IP de los
+# enlaces personales y no se cuentan en las estadísticas. Se administran por /api/admin/presentacion/redes-internas
+# (tabla presentacion_redes_internas) y, opcionalmente, con PRESENTACION_REDES_INTERNAS="a.b.c.0/24,...".
+_redes_cache: tuple[float, list] = (0.0, [])
 
 # Proveedores de correo temporal o desechable más usados (se bloquean; Gmail, Hotmail, etc. sí se aceptan).
 DESECHABLES = frozenset({
@@ -119,6 +125,82 @@ async def init_db() -> None:
             )
         """)
         await conn.execute("ALTER TABLE presentacion_enlace_ips ENABLE ROW LEVEL SECURITY")
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS presentacion_redes_internas (
+                red TEXT PRIMARY KEY,
+                nota TEXT DEFAULT '',
+                creado TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+        await conn.execute("ALTER TABLE presentacion_redes_internas ENABLE ROW LEVEL SECURITY")
+
+
+def normalizar_red(red: str) -> str:
+    """'206.62.142.7' → '206.62.142.7/32'; '206.62.142.0/24' igual. ValueError si no es una red válida."""
+    n = ipaddress.ip_network((red or "").strip(), strict=False)
+    if n.num_addresses > (2 ** 16 if n.version == 4 else 2 ** 80):
+        raise ValueError("red demasiado amplia")
+    return str(n)
+
+
+async def _redes_internas() -> list:
+    global _redes_cache
+    if time.monotonic() - _redes_cache[0] < 60:
+        return _redes_cache[1]
+    redes = []
+    for r in os.getenv("PRESENTACION_REDES_INTERNAS", "").split(","):
+        try:
+            if r.strip():
+                redes.append(ipaddress.ip_network(r.strip(), strict=False))
+        except ValueError:
+            pass
+    try:
+        pool = await database._get_pg_pool()
+        if pool:
+            async with pool.acquire() as conn:
+                for fila in await conn.fetch("SELECT red FROM presentacion_redes_internas"):
+                    redes.append(ipaddress.ip_network(fila["red"], strict=False))
+    except Exception:
+        if _redes_cache[1]:
+            return _redes_cache[1]  # sin base, se conserva la última lista conocida
+    _redes_cache = (time.monotonic(), redes)
+    return redes
+
+
+async def es_interna(ip: str) -> bool:
+    try:
+        direccion = ipaddress.ip_address((ip or "").strip())
+    except ValueError:
+        return False
+    return any(direccion in red for red in await _redes_internas() if red.version == direccion.version)
+
+
+async def agregar_red_interna(red: str, nota: str = "") -> str:
+    global _redes_cache
+    red = normalizar_red(red)
+    pool = await database._get_pg_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO presentacion_redes_internas (red, nota) VALUES ($1, $2) ON CONFLICT (red) DO UPDATE SET nota = EXCLUDED.nota",
+            red, (nota or "").strip()[:120])
+    _redes_cache = (0.0, [])
+    return red
+
+
+async def listar_redes_internas() -> list[dict[str, Any]]:
+    pool = await database._get_pg_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT red, nota, creado FROM presentacion_redes_internas ORDER BY creado")
+    return [{"red": r["red"], "nota": r["nota"], "creado": str(r["creado"])} for r in rows]
+
+
+async def quitar_red_interna(red: str) -> bool:
+    global _redes_cache
+    pool = await database._get_pg_pool()
+    async with pool.acquire() as conn:
+        r = await conn.execute("DELETE FROM presentacion_redes_internas WHERE red=$1", normalizar_red(red))
+    _redes_cache = (0.0, [])
+    return r.endswith(" 1")
 
 
 async def crear_enlace(cliente: str) -> str:
