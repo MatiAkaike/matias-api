@@ -16,6 +16,7 @@ from typing import Optional
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -27,6 +28,7 @@ load_dotenv(Path(__file__).resolve().parent.parent / "config" / ".env")
 import analytics_store
 import database
 import lead_service as leads
+import presentacion_acceso
 import signals_association
 import chat_security
 import public_portfolio
@@ -339,6 +341,7 @@ async def lifespan(app: FastAPI):
     await leads.init_leads_db()
     await analytics_store.init_analytics_db()
     await signals_association.init_signals_associations()
+    await presentacion_acceso.init_db()
     def cleanup_loop():
         while True:
             time.sleep(300)
@@ -365,6 +368,7 @@ async def protect_sensitive_routes(request: Request, call_next):
         "/api/chat": (20, "chat"),
         "/api/presentacion": (20, "presentacion"),
         "/api/presentacion/event": (120, "presentacion_event"),
+        "/api/presentacion/lead": (8, "presentacion_lead"),
         "/api/session/new": (30, "session"),
         "/api/analytics/pageview": (120, "analytics"),
         "/api/analytics/event": (120, "analytics"),
@@ -1210,6 +1214,64 @@ async def presentacion_event(req: PresentacionEvent, request: Request):
         user_agent=ua,
     )
     return {"ok": True}
+
+# ─── Acceso a la presentación completa (diapositiva 4 en adelante) ───────────
+
+class PresentacionLead(PydanticBase):
+    session_id: str = Field(..., min_length=6, max_length=80)
+    nombre: str = Field(..., max_length=120)
+    correo: str = Field(..., max_length=254)
+    whatsapp: str = Field(..., max_length=30)
+    pais: str = Field("CO", min_length=2, max_length=2)
+    autoriza_datos: bool = False
+    origen: str = Field("", max_length=300)
+
+
+@app.post("/api/presentacion/lead")
+async def presentacion_lead(req: PresentacionLead, request: Request):
+    """Valida y guarda los datos de quien quiere ver la presentación completa."""
+    errores: dict[str, str] = {}
+    nombre, e = presentacion_acceso.validar_nombre(req.nombre)
+    if e: errores["nombre"] = e
+    correo, e = await presentacion_acceso.validar_correo(req.correo)
+    if e: errores["correo"] = e
+    whatsapp, e = presentacion_acceso.validar_whatsapp(req.whatsapp, req.pais)
+    if e: errores["whatsapp"] = e
+    if not req.autoriza_datos:
+        errores["autoriza_datos"] = "Necesitamos su autorización para tratar sus datos."
+    if errores:
+        return JSONResponse(status_code=422, content={"ok": False, "errores": errores})
+    contexto = "Pidió ver la presentación completa (akaike.lat/presentacion)"
+    if req.origen:
+        contexto += f" · origen: {req.origen.strip()[:200]}"
+    await presentacion_acceso.guardar_lead(
+        req.session_id, nombre, correo, whatsapp, req.pais, _get_client_ip(request), contexto)
+    await database.log_presentation_event(
+        session_id=req.session_id, event_type="lead", slide=3, data={"pais": req.pais.upper()},
+        ip=_get_client_ip(request), user_agent=request.headers.get("User-Agent", ""))
+    return {"ok": True, "nombre": nombre.split(" ")[0]}
+
+
+@app.get("/api/presentacion/acceso")
+async def presentacion_acceso_enlace(p: str = ""):
+    """Enlace personal de Oscar: si es válido, la presentación se abre completa sin pedir datos."""
+    cliente = await presentacion_acceso.usar_enlace(p)
+    return {"valido": bool(cliente), "cliente": cliente or ""}
+
+
+class EnlacePresentacion(PydanticBase):
+    cliente: str = Field(..., min_length=2, max_length=120)
+
+
+@app.post("/api/admin/presentacion/enlaces")
+async def crear_enlace_presentacion(req: EnlacePresentacion):
+    token = await presentacion_acceso.crear_enlace(req.cliente)
+    return {"cliente": req.cliente.strip(), "token": token, "url": f"https://www.akaike.lat/presentacion?p={token}"}
+
+
+@app.get("/api/admin/presentacion/enlaces")
+async def listar_enlaces_presentacion(limit: int = 100):
+    return {"enlaces": await presentacion_acceso.listar_enlaces(min(max(limit, 1), 500))}
 
 # ─── Stats de presentación ────────────────────────────────────────────────
 
