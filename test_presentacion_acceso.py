@@ -63,6 +63,16 @@ class EndpointTests(unittest.TestCase):
         args = guardar.call_args.args
         self.assertEqual(args[:5], ("pres-prueba-1", "Laura Pérez", "laura@entidad.com", "573001234567", "CO"))
 
+    def test_lead_guardado_responde_ok_aunque_falle_el_evento(self):
+        with patch.object(pa, "_dominio_recibe_correo", AsyncMock(return_value=True)), \
+             patch.object(pa, "guardar_lead", AsyncMock()) as guardar, \
+             patch.object(self.server.database, "log_presentation_event", AsyncMock(side_effect=RuntimeError("CHECK event_type"))):
+            r = self.client.post("/api/presentacion/lead", headers=self.cab(), json={
+                "session_id": "pres-prueba-3", "nombre": "Laura Pérez", "correo": "laura@entidad.com",
+                "whatsapp": "3001234567", "pais": "CO", "autoriza_datos": True})
+        self.assertEqual(r.json(), {"ok": True, "nombre": "Laura"})
+        guardar.assert_called_once()
+
     def test_lead_invalido_devuelve_errores_por_campo(self):
         with patch.object(pa, "_dominio_recibe_correo", AsyncMock(return_value=True)), \
              patch.object(pa, "guardar_lead", AsyncMock()) as guardar:

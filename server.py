@@ -1281,9 +1281,14 @@ async def presentacion_lead(req: PresentacionLead, request: Request):
         contexto += f" · origen: {req.origen.strip()[:200]}"
     await presentacion_acceso.guardar_lead(
         req.session_id, nombre, correo, whatsapp, req.pais, _get_client_ip(request), contexto)
-    await database.log_presentation_event(
-        session_id=req.session_id, event_type="lead", slide=3, data={"pais": req.pais.upper()},
-        ip=_get_client_ip(request), user_agent=request.headers.get("User-Agent", ""))
+    # El lead ya quedó guardado: el evento es solo medición y no debe tumbar la respuesta
+    # (en producción presentation_events tiene un CHECK que no admite «lead»).
+    try:
+        await database.log_presentation_event(
+            session_id=req.session_id, event_type="lead", slide=3, data={"pais": req.pais.upper()},
+            ip=_get_client_ip(request), user_agent=request.headers.get("User-Agent", ""))
+    except Exception as exc:
+        logging.getLogger("matias.presentacion").warning("No se registró el evento del lead: %s", type(exc).__name__)
     return {"ok": True, "nombre": nombre.split(" ")[0]}
 
 
