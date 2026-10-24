@@ -1,5 +1,6 @@
 import json
 import hmac
+import html
 import os
 import re
 import uuid
@@ -59,7 +60,7 @@ MODEL_ID = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
-MAX_TOKENS = int(os.getenv("MAX_TOKENS", "4096"))
+MAX_TOKENS = int(os.getenv("MAX_TOKENS", "700"))
 MEETING_URL = os.getenv(
     "GOOGLE_CALENDAR_BOOKING_URL",
     "https://calendar.app.google/up2iyv5hJkJpRJta9",
@@ -91,6 +92,23 @@ _chat_quota: dict[str, tuple[int, float]] = {}
 _chat_quota_lock = threading.Lock()
 
 
+WEB_CHAT_QUOTA_LIMIT = int(os.getenv("WEB_CHAT_QUOTA_LIMIT", "60"))  # respuestas del modelo por IP y día
+_web_chat_quota: dict[str, tuple[int, float]] = {}
+
+
+def _consume_web_chat_quota(ip: str) -> bool:
+    """Cuota diaria del chat del sitio por IP (aparte de la de la presentación)."""
+    now = time.time()
+    with _chat_quota_lock:
+        count, first_seen = _web_chat_quota.get(ip, (0, now))
+        if now - first_seen > CHAT_QUOTA_WINDOW:
+            count, first_seen = 0, now
+        if count >= WEB_CHAT_QUOTA_LIMIT:
+            return False
+        _web_chat_quota[ip] = (count + 1, first_seen)
+        return True
+
+
 def _consume_chat_quota(ip: str) -> bool:
     """Devuelve True si aún queda cuota de chat para la IP; consume un turno."""
     if not ip or ip == "unknown":
@@ -106,22 +124,40 @@ def _consume_chat_quota(ip: str) -> bool:
         return True
 
 
-def _get_client_ip(request: Request) -> str:
-    """Usa la IP normalizada por Uvicorn; solo recurre a XFF desde proxy privado."""
-    peer = request.client.host if request.client else ""
+# Cloudflare (delante de onrender.com) agrega su propia IP a X-Forwarded-For: no es el cliente.
+# Lista pública de https://www.cloudflare.com/ips-v4 y /ips-v6 (24-oct-2026).
+_CLOUDFLARE = tuple(ipaddress.ip_network(r) for r in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+    "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32",
+))
+
+
+def _ip_publica(valor: str):
     try:
-        if peer and not ipaddress.ip_address(peer).is_private:
-            return peer
+        ip = ipaddress.ip_address(valor.strip())
     except ValueError:
-        pass
+        return None
+    if not ip.is_global or any(ip in red for red in _CLOUDFLARE):
+        return None
+    return ip
+
+
+def _get_client_ip(request: Request) -> str:
+    """IP del cliente que NO puede inventar quien llama (aviso de seguridad del 24-oct-2026).
+
+    Render deja la X-Forwarded-For que manda el navegador y le agrega a la derecha la IP que se le
+    conectó; Uvicorn, si confía en el proxy, pone en `request.client` la de más a la IZQUIERDA, que
+    es la que el cliente escribe a su antojo (así se fingía la red interna de Akaike). Por eso se
+    toma la de más a la derecha que sea pública y no de Cloudflare: esa la agregó la infraestructura.
+    """
     forwarded = request.headers.get("X-Forwarded-For", "")
-    if forwarded:
-        for candidate in reversed([value.strip() for value in forwarded.split(",")]):
-            try:
-                if not ipaddress.ip_address(candidate).is_private:
-                    return candidate
-            except ValueError:
-                continue
+    for candidate in reversed(forwarded.split(",")):
+        if _ip_publica(candidate):
+            return candidate.strip()
+    peer = request.client.host if request.client else ""
     return peer or "unknown"
 
 
@@ -225,9 +261,9 @@ async def _send_abuse_alert(ip: str, session_count: int, last_session_id: str):
     """Envía Telegram a Oscar via el bot de Amelia cuando se detecta abuso."""
     msg = (
         f"🚨 <b>ALERTA DE ABUSO — M.A.T.I.A.S. Web</b>\n\n"
-        f"<b>IP:</b> <code>{ip}</code>\n"
+        f"<b>IP:</b> <code>{html.escape(ip)}</code>\n"
         f"<b>Sesiones activas:</b> {session_count}\n"
-        f"<b>Última sesión:</b> <code>{last_session_id}</code>\n\n"
+        f"<b>Última sesión:</b> <code>{html.escape(str(last_session_id))}</code>\n\n"
         f"⚠️ Una misma IP ha abierto {session_count}+ conversaciones. "
         f"Podría ser un bot, ataque DoS o scraping intensivo.\n\n"
         f"📊 <a href=\"https://matias-api-ka16.onrender.com/api/interactions/stats\">Ver estadísticas</a>"
@@ -332,6 +368,8 @@ def _cleanup_sessions():
         ]
         for ip in stale_quota_ips:
             del _chat_quota[ip]
+        for ip in [k for k, (_, first_seen) in _web_chat_quota.items() if now - first_seen > CHAT_QUOTA_WINDOW]:
+            del _web_chat_quota[ip]
 
 
 # ─── Lifespan ────────────────────────────────────────────────────────────────
@@ -354,7 +392,8 @@ async def lifespan(app: FastAPI):
     await database.close_db()
 
 
-app = FastAPI(title="M.A.T.I.A.S. API", version="1.0.0", lifespan=lifespan)
+# Sin /docs ni /openapi.json públicos: no se le entrega a cualquiera el mapa de la API.
+app = FastAPI(title="M.A.T.I.A.S. API", version="1.0.0", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 app.add_middleware(chat_security.RequestSizeLimitMiddleware, max_bytes=65536)
 
 
@@ -615,6 +654,17 @@ async def _chat_impl(req: ChatRequest, request: Request):
 
     if not API_KEY:
         raise HTTPException(status_code=500, detail="API key no configurada")
+
+    # Frenos de costo antes de usar el modelo (el chat web no tenía ninguno): cuota diaria por IP y
+    # el mismo tope por hora de todo el sitio que ya usa la presentación.
+    if not _consume_web_chat_quota(client_ip) or not anti_bots.hay_cupo_global():
+        content = (
+            "En este momento tengo muchas consultas. Si quieres conocer más de M.A.T.I.A.S., "
+            f"agenda una reunión aquí: {MEETING_URL}"
+        )
+        session.add_message("assistant", content)
+        await database.log_interaction(sid, "assistant", content, MODEL_ID, "web_cuota")
+        return ChatResponse(reply=content, session_id=sid)
 
     try:
         import knowledge_base
@@ -1063,7 +1113,8 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
         )
 
     # Freno global: si el sitio entero pasa el tope de respuestas por hora, no se usa el modelo.
-    if not red_interna and not anti_bots.hay_cupo_global():
+    # Sin excepción para la red interna: el tope por hora acota el gasto pase lo que pase con la IP.
+    if not anti_bots.hay_cupo_global():
         return await _persist_presentation_turn(
             req, "En este momento tengo muchas consultas. Si quieres conocer más, agenda una reunión aquí:\n" + AGENDA_URL,
             "cuota", client_ip, client_ua,

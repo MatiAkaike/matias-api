@@ -30,6 +30,42 @@ class SecurityBoundaryTests(unittest.TestCase):
         })
         self.assertEqual(server._get_client_ip(request), "8.8.8.8")
 
+    def _request_con_xff(self, xff: str, peer: str = "10.0.0.2"):
+        return Request({
+            "type": "http", "method": "GET", "path": "/",
+            "headers": [(b"x-forwarded-for", xff.encode())],
+            "client": (peer, 1234), "server": ("test", 80), "scheme": "http", "query_string": b"",
+        })
+
+    def test_ip_inventada_por_el_cliente_no_cuenta(self):
+        # Aviso del 24-oct-2026: con la red interna de Akaike escrita a la izquierda, Uvicorn la
+        # ponía en request.client y la API la creía. Cuenta la que agregó la infraestructura.
+        request = self._request_con_xff("206.62.142.10, 190.85.1.2", peer="206.62.142.10")
+        self.assertEqual(server._get_client_ip(request), "190.85.1.2")
+
+    def test_la_ip_de_cloudflare_a_la_derecha_se_salta(self):
+        request = self._request_con_xff("206.62.142.10, 190.85.1.2, 172.70.10.5", peer="206.62.142.10")
+        self.assertEqual(server._get_client_ip(request), "190.85.1.2")
+        request = self._request_con_xff("190.85.1.2, 2606:4700::1")
+        self.assertEqual(server._get_client_ip(request), "190.85.1.2")
+
+    def test_sin_forwarded_usa_la_conexion(self):
+        request = Request({
+            "type": "http", "method": "GET", "path": "/", "headers": [],
+            "client": ("190.85.1.2", 1234), "server": ("test", 80), "scheme": "http", "query_string": b"",
+        })
+        self.assertEqual(server._get_client_ip(request), "190.85.1.2")
+        self.assertEqual(server._get_client_ip(self._request_con_xff("basura, 10.0.0.9")), "10.0.0.2")
+
+    def test_cuota_diaria_del_chat_web(self):
+        server._web_chat_quota.clear()
+        with patch.object(server, "WEB_CHAT_QUOTA_LIMIT", 2):
+            self.assertTrue(server._consume_web_chat_quota("190.85.1.2"))
+            self.assertTrue(server._consume_web_chat_quota("190.85.1.2"))
+            self.assertFalse(server._consume_web_chat_quota("190.85.1.2"))
+            self.assertTrue(server._consume_web_chat_quota("190.85.1.3"))
+        server._web_chat_quota.clear()
+
     def test_request_models_reject_oversized_fields(self):
         with self.assertRaises(ValidationError):
             server.ChatRequest(message="x" * 4001)
