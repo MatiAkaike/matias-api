@@ -5,10 +5,11 @@ from pathlib import Path
 from chat_security import normalized_text
 
 _DIR = Path(__file__).resolve().parent / 'conocimiento'
-# El portafolio y la suscripción con AKUs van completos al modelo: son la fuente vigente y pública (sin precios).
+# Van completos al modelo, en este orden: la explicación simple (fuente principal), el portafolio y la
+# suscripción con AKUs. Son la fuente vigente y pública (sin precios).
 CONTEXT = '\n\n'.join(
     (_DIR / nombre).read_text(encoding='utf-8')
-    for nombre in ('MATIAS_OS_PORTAFOLIO_PUBLICO.md', 'MATIAS_OS_SUSCRIPCION_AKUS_PUBLICO.md')
+    for nombre in ('MATIAS_OS_RESPUESTAS_CLARAS.md', 'MATIAS_OS_PORTAFOLIO_PUBLICO.md', 'MATIAS_OS_SUSCRIPCION_AKUS_PUBLICO.md')
 )
 
 

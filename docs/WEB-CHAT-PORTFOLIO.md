@@ -29,3 +29,21 @@ Regresiones agregadas: cobertura completa en las dos rutas, portafolio y límite
 ## Verificación de release
 
 Solo publicar archivos explícitos del backend. Comparar SHA remoto con `/api/health`. Probar portafolio y cotización en las dos rutas y preguntas legítimas específicas del portafolio con sesiones QA, sin datos personales, sin ataques ni contactos artificiales. Revisar que no aparecen importes, monedas, nombres viejos de planes (Scale, Enterprise Pro) ni datos internos. No enviar más de diez consultas a presentación por IP: su cuota se aplica durante veinticuatro horas y se reinicia con el proceso.
+
+## Respuestas claras (26-oct-2026)
+
+Oscar encontró el chat confuso: no respondía en simple, mezclaba jerga técnica, metía AKUs y setup que nadie había preguntado, ponía la agenda en cada mensaje y no aclaraba quién pone la API.
+
+Qué cambió:
+- La fuente principal es `conocimiento/MATIAS_OS_RESPUESTAS_CLARAS.md`, que explica en lenguaje de gerente cómo se construye el modelo (con los archivos del historial, sin API) y cómo se usa (la API es de M.A.T.I.A.S., también desde la plataforma web o con Flows).
+- Al modelo le llegan solo esa explicación, el portafolio y la suscripción. Ya no le llega el material técnico anterior (stack, requerimientos, documentación de la API) que recuperaba `knowledge_base`.
+- El prompt tiene la sección «CÓMO RESPONDER»: responder primero, aclarar malentendidos de frente, sin jerga, una idea por respuesta, no repetir preguntas y compartir la agenda solo cuando corresponde. Tiene además ejemplos de tono.
+- El chat responde con `WEB_CHAT_TEMPERATURE`, por defecto 0,3.
+- El modelo sigue siendo DeepSeek V4.1 Flash (`deepseek-flash`; `deepseek-chat` llega al mismo).
+
+Cómo se mide: `ops/evaluar_chat_web.py` con `ops/chat_web_conversaciones.json`, 26 conversaciones y 37 respuestas, entre ellas la conversación real de la API. Comparado con antes:
+- jerga: de 2 respuestas a 0;
+- enlace de agenda: de 8 de 26 a 4 de 37, y solo cuando lo piden o lo justifica la conversación;
+- AKUs o setup que nadie pidió: de 4 respuestas a 1.
+
+Cualquier cambio al prompt o a la fuente se vuelve a medir con el mismo banco.

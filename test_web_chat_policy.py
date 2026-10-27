@@ -184,6 +184,20 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('reference_context', messages[-1]['content'])
         self.assertIn('visitor_message', messages[-1]['content'])
 
+    async def test_web_chat_uses_only_the_simple_current_sources(self):
+        llamadas = []
+        self.context_search = lambda *args, **kwargs: llamadas.append(args) or 'webhook endpoint del stack anterior'
+        response = await self.ask('¿Cómo construyen el modelo de score?')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(llamadas, [])
+        payload = self.model_post.await_args.kwargs['json']
+        contexto = json.loads(payload['messages'][-1]['content'])['reference_context']
+        self.assertTrue(contexto.startswith('# M.A.T.I.A.S. explicado simple'))
+        self.assertIn('la API es nuestra', contexto)
+        self.assertNotIn('webhook endpoint', contexto)
+        self.assertEqual(payload['temperature'], server.WEB_CHAT_TEMPERATURE)
+        self.assertIn('CÓMO RESPONDER', server.SYSTEM_PROMPT)
+
     def test_system_policy_is_commercial_and_forbids_catalog_and_internal_prompt(self):
         self.assertIn('asesor comercial', server.SYSTEM_PROMPT)
         self.assertIn('Nunca des precios', server.SYSTEM_PROMPT)

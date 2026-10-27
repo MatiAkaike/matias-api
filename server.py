@@ -56,10 +56,12 @@ except ImportError:
 
 # ─── Model config (env vars with sensible defaults) ──────────────────────────
 
-MODEL_ID = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+MODEL_ID = os.getenv("DEEPSEEK_MODEL", "deepseek-flash")  # DeepSeek V4.1 Flash
 API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
+# El chat de la web responde con poca variación: respuestas concretas y consistentes.
+WEB_CHAT_TEMPERATURE = float(os.getenv("WEB_CHAT_TEMPERATURE", "0.3"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "700"))
 MEETING_URL = os.getenv(
     "GOOGLE_CALENDAR_BOOKING_URL",
@@ -667,13 +669,9 @@ async def _chat_impl(req: ChatRequest, request: Request):
         return ChatResponse(reply=content, session_id=sid)
 
     try:
-        import knowledge_base
-
-        context = chat_security.public_context(
-            knowledge_base.search_relevant(req.message.strip(), max_chars=6000, public_only=True)
-        )
-        # La fuente vigente va completa; no depende del ranking del material anterior.
-        context = public_portfolio.CONTEXT + '\n\nREFERENCIAS COMPLEMENTARIAS:\n' + context
+        # Solo la fuente vigente y simple: el material técnico anterior (stack, requerimientos, API)
+        # confundía a los visitantes con jerga y versiones distintas del mismo proceso.
+        context = public_portfolio.CONTEXT
         model_messages = chat_security.safe_history(session.messages, SYSTEM_PROMPT, MEETING_URL)
         if context:
             # JSON separa valores de referencia y pregunta; ninguno es una instrucción de sistema.
@@ -691,7 +689,7 @@ async def _chat_impl(req: ChatRequest, request: Request):
                 json={
                     "model": MODEL_ID,
                     "messages": model_messages,
-                    "temperature": TEMPERATURE,
+                    "temperature": WEB_CHAT_TEMPERATURE,
                     "max_tokens": MAX_TOKENS,
                 },
             )
