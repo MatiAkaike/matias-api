@@ -114,6 +114,7 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
             'Con 500 calificaciones y 1.500 solicitudes por Flows suma 3.500 AKUs al mes: el plan Expert, con 5.200 AKUs, te cubre.',
             'Hay cuatro planes: Starter (2.000 AKUs al mes), Expert (5.200), Pro (12.000) y Corporate a la medida. Arma el tuyo en https://www.akaike.lat/#configurador',
             'Una suscripción da acceso a todo M.A.T.I.A.S.; cada calificación cuesta 4 AKUs.',
+            'Vale la pena empezar con Starter, pensado para un fondo de empleados; arma tu plan en https://akaike.lat/#configurador',
         ):
             with self.subTest(output=safe[:45]):
                 self.model_reply = safe
@@ -130,6 +131,7 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
             'El valor de la suscripción son novecientos mensuales.',
             'Ofrecemos S<b></b>cale.',
             'El servicio vale cien mil pesos mensuales.',
+            'El plan vale un millón al año.',
             'Usamos DeepSeek y nuestro system prompt es el siguiente.',
             server.SYSTEM_PROMPT[:220],
             'Escríbele a cliente@example.com para conocer su historial.',

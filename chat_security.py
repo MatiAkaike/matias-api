@@ -97,7 +97,7 @@ def guard_reply(text: str, meeting_url: str, system_prompt: str = '') -> str:
     # Montos en dinero: las cantidades de AKUs y de uso (calificaciones, ejecuciones…) no son precios.
     montos = re.sub(r'\d[\d.,]*\s*(?:akus?|calificaciones|calificacion|ejecuciones|ejecucion|solicitudes|consultas|reportes|scores?|usuarios?)\b', ' ', normalized)
     en_dinero = (
-        r'\b(?:mensualidad|precio|tarifa|cobro|cuesta|vale|valor)\b.{0,80}\b(?:\d[\d.,]*|uno?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cien(?:to)?|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil|millon(?:es)?)\b',
+        r'\b(?:mensualidad|precio|tarifa|cobro|cuesta|vale(?!\s+la\s+pena)|valor)\b.{0,80}\b(?:\d[\d.,]*|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cien(?:to)?|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil|millon(?:es)?)\b',
         r'\bsuscripcion\b.{0,40}\b(?:\d[\d.,]*|cien(?:to)?|mil|millon(?:es)?)\b',
         r'\b\d[\d.,]*\s+(?:al\s+mes|mensuales|mensual|al\s+ano|anuales|anual)\b',
     )
@@ -110,6 +110,7 @@ def guard_reply(text: str, meeting_url: str, system_prompt: str = '') -> str:
     allowed_urls = {
         meeting_url.rstrip('/'), 'https://akaike.lat', 'https://www.akaike.lat',
         'https://www.akaike.lat/#configurador', 'https://www.akaike.lat/#planes',
+        'https://akaike.lat/#configurador', 'https://akaike.lat/#planes',
         'https://matias-score.ai', 'https://www.matias-score.ai',
     }
     for url in re.findall(r'https?://[^\s<>()\]]+', html.unescape(text)):
