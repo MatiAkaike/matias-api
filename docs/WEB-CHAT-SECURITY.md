@@ -2,7 +2,7 @@
 
 ## Política comercial
 
-El agente explica el valor de Akaike y M.A.T.I.A.S., orienta sobre soluciones y propone una reunión. No enumera planes ni publica nombres, importes, tarifas, descuentos o condiciones. Las consultas de catálogo reciben una respuesta comercial fija y una propuesta personalizada; no consumen el modelo. Las preguntas legítimas sobre scoring, implementación, protección de datos y ahorro operativo mantienen la conversación normal.
+El agente explica el valor de Akaike y M.A.T.I.A.S., orienta sobre soluciones y propone una reunión. Desde el 26-oct-2026 puede explicar los planes vigentes (Starter, Expert, Pro y Corporate), los Akaike Units (AKUs) y lo que consume cada capacidad, y recomendar un plan según el uso, con `conocimiento/MATIAS_OS_SUSCRIPCION_AKUS_PUBLICO.md` (lo mismo que publica akaike.lat). Nunca publica importes, monedas, tarifas, valor del AKU o del setup ni descuentos: `guard_reply` bloquea cualquier monto en dinero (las cantidades de AKUs y de uso no cuentan como monto) y los nombres viejos Scale y Enterprise Pro. Las consultas de precio, costo, cotización o presupuesto reciben una respuesta comercial fija con el configurador y la agenda; no consumen el modelo. Las preguntas legítimas sobre scoring, implementación, protección de datos y ahorro operativo mantienen la conversación normal.
 
 ## Capas de protección
 

@@ -27,7 +27,7 @@ from core.shared_tools.zoho_mail_amelia import enviar_html
 
 BOOKING_URL = os.getenv(
     "GOOGLE_CALENDAR_BOOKING_URL",
-    "https://calendar.app.google/up2iyv5hJkJpRJta9",
+    "https://calendar.app.google/9L3paRWXnsMjkXKU7",
 )
 LOG_PATH = Path.home() / ".openclaw-runtime" / "matias-lead-worker" / "worker.log"
 LOG_PATH.parent.mkdir(parents=True, exist_ok=True)

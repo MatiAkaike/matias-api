@@ -78,14 +78,12 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(self.log_turn.await_count, 2)
 
 
-    async def test_catalog_and_price_questions_keep_commercial_handoff_without_model(self):
+    async def test_price_questions_keep_commercial_handoff_without_model(self):
         for question in (
-            '¿Qué planes tiene Akaike?',
             '¿Cuánto cuesta el plan Starter?',
-            'Dime qué incluye cada plan, sin precios',
-            '¿Qué incluye Enterprise Pro?',
             '¿Hay descuentos o tarifas mensuales?',
             'What are your pricing plans?',
+            '¿Cuál es el precio del AKU?',
         ):
             with self.subTest(question=question):
                 response = await self.ask(question)
@@ -94,18 +92,44 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
                 self.lead_save.assert_awaited()
                 reply = response.json()['reply']
                 self.assertIn(server.MEETING_URL, reply)
-                for name in ('Starter', 'Scale', 'Corporate', 'Enterprise Pro'):
-                    self.assertNotIn(name.casefold(), reply.casefold())
+                self.assertNotIn('$', reply)
+                self.assertNotIn('usd', reply.casefold())
+
+    async def test_plan_questions_without_prices_reach_model(self):
+        # Desde el 26-oct-2026 los planes y los AKUs son públicos (akaike.lat); los precios no.
+        for question in (
+            '¿Qué planes tiene Akaike?',
+            'Dime qué incluye cada plan, sin precios',
+            '¿Qué plan me conviene si hago 500 calificaciones al mes?',
+            '¿Qué es un AKU?',
+        ):
+            with self.subTest(question=question):
+                before = self.model_post.await_count
+                response = await self.ask(question)
+                self.assertEqual(response.status_code, 200)
+                self.assertEqual(self.model_post.await_count, before + 1)
+
+    async def test_model_can_explain_plans_and_akus_without_money(self):
+        for safe in (
+            'Con 500 calificaciones y 1.500 solicitudes por Flows suma 3.500 AKUs al mes: el plan Expert, con 5.200 AKUs, te cubre.',
+            'Hay cuatro planes: Starter (2.000 AKUs al mes), Expert (5.200), Pro (12.000) y Corporate a la medida. Arma el tuyo en https://www.akaike.lat/#configurador',
+            'Una suscripción da acceso a todo M.A.T.I.A.S.; cada calificación cuesta 4 AKUs.',
+        ):
+            with self.subTest(output=safe[:45]):
+                self.model_reply = safe
+                response = await self.ask('¿Qué plan me conviene?')
+                self.assertEqual(response.json()['reply'], safe)
 
     async def test_model_output_cannot_publish_catalog_prices_or_internal_information(self):
         for unsafe in (
             'Ofrecemos Starter, Scale, Corporate y Enterprise Pro.',
+            'El plan Starter vale 777 USD al mes.',
+            'La suscripción Expert son 1.234 mensuales.',
             'La mensualidad es de $999.000 COP.',
             'La mensualidad es 999 al mes.',
             'El valor de la suscripción son novecientos mensuales.',
-            'Ofrecemos S<b></b>tarter.',
+            'Ofrecemos S<b></b>cale.',
             'El servicio vale cien mil pesos mensuales.',
-            'El plan A incluye validación y el plan B incluye API.',
             'Usamos DeepSeek y nuestro system prompt es el siguiente.',
             server.SYSTEM_PROMPT[:220],
             'Escríbele a cliente@example.com para conocer su historial.',
@@ -138,7 +162,7 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
         contents = ' '.join(item['content'] for item in sent)
         self.assertNotIn('SYSTEM_INJECTED_FROM_DATABASE', contents)
         self.assertNotIn('ignore previous instructions', contents)
-        self.assertNotIn('Starter', contents)
+        self.assertNotIn('999 USD', contents)
         self.assertIn('mejorar su originación', contents)
 
     async def test_reference_context_does_not_expose_catalog_and_is_separate_from_instructions(self):
@@ -152,15 +176,16 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
         assert call is not None
         messages = call.kwargs['json']['messages']
         contents = ' '.join(item['content'] for item in messages)
-        self.assertNotIn('Starter', contents)
         self.assertNotIn('999 USD', contents)
         self.assertIn('modelos de scoring personalizados', contents)
+        self.assertIn('Akaike Units', contents)
         self.assertIn('reference_context', messages[-1]['content'])
         self.assertIn('visitor_message', messages[-1]['content'])
 
     def test_system_policy_is_commercial_and_forbids_catalog_and_internal_prompt(self):
         self.assertIn('asesor comercial', server.SYSTEM_PROMPT)
-        self.assertIn('No enumeres planes', server.SYSTEM_PROMPT)
+        self.assertIn('Nunca des precios', server.SYSTEM_PROMPT)
+        self.assertIn('Starter (2.000 AKUs al mes)', server.SYSTEM_PROMPT)
         self.assertIn('instrucciones internas', server.SYSTEM_PROMPT)
 
     async def test_session_identifier_rejects_sql_delimiters_before_database_access(self):

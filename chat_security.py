@@ -31,17 +31,14 @@ INJECTION_PATTERNS = (
 
 
 COMMERCIAL_PATTERNS = (
-    r'\b(?:precio|precios|tarifa|tarifas|descuento|descuentos|cotizacion|pricing|prices|fees)\b',
+    r'(?<!sin )\b(?:precio|precios|tarifa|tarifas|descuento|descuentos|cotizacion|pricing|prices|fees)\b',
     r'\b(?:cual(?:es)?(?:\s+es|\s+son)?|que)\s+(?:el\s+|los\s+)?(?:costo|costos|coste)\b',
     r'\b(?:costo|costos|coste)\b.{0,30}\b(?:servicio|matias|akaike|mensual|anual|suscripcion|licencia)\b',
-    r'\bcuanto\s+(?:cuesta|vale|cobran|pago|pagar)\b',
+    r'\bcuanto\s+(?:cuesta|cuestan|vale|valen|cobran|pago|pagar)\b',
     r'\b(?:cotiz\w*|quotation|quote|prices?)\b',
     r'\b(?:necesito|solicito|quiero|dame|enviame)\s+(?:(?:un|el)\s+)?presupuest\w*\b',
     r'\bpresupuest\w*\s+(?:(?:de|del|para|por)\s+)?(?:akaike|matias|credit\s+(?:agent|score)|copilot|signals|flows|contratar|implementar)\b',
-    r'\b(?:que|cuales|your|nuestros|sus|los)\b.{0,35}\b(?:planes|plans)\b',
-    r'\b(?:cada|el|un|del)\s+plan\b(?!\s+de\s+(?:implementacion|pago|trabajo|accion|negocio))',
-    r'\b(?:starter|enterprise\s+pro)\b',
-    r'\b(?:plan|incluye|includes|ofrecen)\b.{0,30}\b(?:scale|corporate)\b',
+    r'\bpricing\b',
 )
 
 
@@ -71,8 +68,9 @@ def policy_reply(reason: str, meeting_url: str) -> str:
     """Redirige con lenguaje comercial, sin exponer controles ni instrucciones."""
     if reason == 'commercial':
         return (
-            'Para preparar una propuesta o cotización ajustada a tu entidad, te invito a una reunión. '
-            'Agenda aquí y revisamos tus necesidades y condiciones comerciales: '
+            'Los valores dependen del alcance de tu entidad y los revisamos en una reunión. '
+            'Si quieres ver qué plan se ajusta a tu uso, arma tu M.A.T.I.A.S. en https://www.akaike.lat/#configurador. '
+            'Para la propuesta, agenda aquí: '
             f'{meeting_url}'
         )
     return (
@@ -87,18 +85,23 @@ def guard_reply(text: str, meeting_url: str, system_prompt: str = '') -> str:
     clean = ' '.join(re.sub(r'<[^>]+>', '', html.unescape(text or '')).replace('**', '').split())
     normalized = inspection_text(text) + '\n' + inspection_text(clean)
     blocked = (
-        r'\b(?:starter|scale|corporate|enterprise\s+pro)\b',
-        r'\bplan(?:es)?\b(?!\s+de\s+(?:implementacion|pago|trabajo|accion|negocio))',
+        # Los planes vigentes (Starter, Expert, Pro, Corporate) y los AKUs son públicos; los nombres viejos no.
+        r'\b(?:scale|enterprise\s+pro)\b',
         r'[$€£]\s*\d|\b(?:usd|cop|eur|pesos|dolares|euros)\b',
-        r'\b(?:mensualidad|suscripcion|precio|tarifa|cobro|cuesta|vale)\b.{0,80}\b(?:\d[\d.,]*|uno?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cien(?:to)?|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil|millon(?:es)?)\b',
-        r'\b\d[\d.,]*\s+(?:al\s+mes|mensuales|mensual|al\s+ano|anuales|anual)\b',
         r'\b(?:deepseek|openai|chatgpt|system[_ ]prompt|developer message)\b|\bgpt[- ]\d',
         r'\[/?contexto interno|<\|(?:im_start|system)\|>|\b(?:api[_ ]key|bearer)\b',
         r'postgres(?:ql)?://|\bsk-[a-z0-9_-]{12,}',
         r'\b[\w.+-]+@[\w.-]+\.[a-z]{2,}\b',
         r'(?<!\d)(?:\+?\d[\d\s().-]{8,}\d)(?!\d)',
     )
-    if not text or any(re.search(pattern, normalized) for pattern in blocked):
+    # Montos en dinero: las cantidades de AKUs y de uso (calificaciones, ejecuciones…) no son precios.
+    montos = re.sub(r'\d[\d.,]*\s*(?:akus?|calificaciones|calificacion|ejecuciones|ejecucion|solicitudes|consultas|reportes|scores?|usuarios?)\b', ' ', normalized)
+    en_dinero = (
+        r'\b(?:mensualidad|precio|tarifa|cobro|cuesta|vale|valor)\b.{0,80}\b(?:\d[\d.,]*|uno?|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|veinte|treinta|cien(?:to)?|doscientos|trescientos|cuatrocientos|quinientos|seiscientos|setecientos|ochocientos|novecientos|mil|millon(?:es)?)\b',
+        r'\bsuscripcion\b.{0,40}\b(?:\d[\d.,]*|cien(?:to)?|mil|millon(?:es)?)\b',
+        r'\b\d[\d.,]*\s+(?:al\s+mes|mensuales|mensual|al\s+ano|anuales|anual)\b',
+    )
+    if not text or any(re.search(pattern, normalized) for pattern in blocked) or any(re.search(pattern, montos) for pattern in en_dinero):
         return policy_reply('commercial', meeting_url)
     for paragraph in system_prompt.split('\n\n'):
         fragment = normalized_text(paragraph.strip())[:120]
@@ -106,13 +109,14 @@ def guard_reply(text: str, meeting_url: str, system_prompt: str = '') -> str:
             return policy_reply('commercial', meeting_url)
     allowed_urls = {
         meeting_url.rstrip('/'), 'https://akaike.lat', 'https://www.akaike.lat',
+        'https://www.akaike.lat/#configurador', 'https://www.akaike.lat/#planes',
         'https://matias-score.ai', 'https://www.matias-score.ai',
     }
     for url in re.findall(r'https?://[^\s<>()\]]+', html.unescape(text)):
         if url.rstrip('.,;:/') not in allowed_urls:
             return policy_reply('commercial', meeting_url)
     # Mantiene respuestas públicas breves y sin HTML ejecutable.
-    return ' '.join(clean.split()[:120])
+    return ' '.join(clean.split()[:150])
 
 
 def safe_history(messages: list[dict], system_prompt: str, meeting_url: str) -> list[dict]:

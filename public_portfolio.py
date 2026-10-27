@@ -1,10 +1,15 @@
-"""Portafolio público vigente: productos, no planes ni precios."""
+"""Portafolio público vigente: productos y suscripción con AKUs; nunca precios."""
 import re
 from pathlib import Path
 
 from chat_security import normalized_text
 
-CONTEXT = (Path(__file__).resolve().parent / 'conocimiento' / 'MATIAS_OS_PORTAFOLIO_PUBLICO.md').read_text(encoding='utf-8')
+_DIR = Path(__file__).resolve().parent / 'conocimiento'
+# El portafolio y la suscripción con AKUs van completos al modelo: son la fuente vigente y pública (sin precios).
+CONTEXT = '\n\n'.join(
+    (_DIR / nombre).read_text(encoding='utf-8')
+    for nombre in ('MATIAS_OS_PORTAFOLIO_PUBLICO.md', 'MATIAS_OS_SUSCRIPCION_AKUS_PUBLICO.md')
+)
 
 
 def is_overview_question(question: str) -> bool:
@@ -21,7 +26,7 @@ def is_overview_question(question: str) -> bool:
 def is_relevant(question: str) -> bool:
     text = normalized_text(question)
     return is_overview_question(question) or bool(re.search(
-        r'\b(?:matias|akaike|credit|copilot|signals|flows|brain|scoring|credito|training|erp|mcp|terminal|omnicanal|desembolso|data\s+b[. ]?i)\b', text
+        r'\b(?:matias|akaike|credit|copilot|signals|flows|brain|scoring|credito|training|erp|mcp|terminal|omnicanal|desembolso|data\s+b[. ]?i|planes?|akus?|suscripcion)\b', text
     ))
 
 

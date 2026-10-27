@@ -86,6 +86,6 @@ Brain aporta conocimiento; Copilot ayuda a consultarlo; Credit Score aporta pred
 
 ## Orientación comercial pública
 
-Explicar productos y beneficios sin comunicar planes, precios, descuentos, cuotas, condiciones por nivel ni inclusiones por plan. Para toda solicitud de precio, presupuesto o cotización invitar expresamente a una reunión y mostrar el enlace oficial de agenda: https://calendar.app.google/up2iyv5hJkJpRJta9
+Explicar productos, beneficios, planes y AKUs según el documento público de suscripción (Starter, Expert, Pro y Corporate), sin comunicar precios, mensualidades, descuentos ni ningún monto en dinero. Para toda solicitud de precio, presupuesto o cotización invitar expresamente a una reunión y mostrar el enlace oficial de agenda: https://calendar.app.google/9L3paRWXnsMjkXKU7
 
 La reunión sirve para confirmar la necesidad, disponibilidad actual, alcance, integraciones, permisos y propuesta correspondiente. No inventar una cotización ni afirmar que todas las funciones de esta visión ya operan comercialmente.
