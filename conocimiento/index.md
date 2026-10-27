@@ -47,7 +47,6 @@ Catalogo orientado al contenido de la wiki.
 - [[Modelo experto sin data historica]] — Concepto transversal detectado en transcripciones y documentos base.
 - [[Modelo personalizado por entidad]] — Concepto transversal detectado en transcripciones y documentos base.
 - [[Originacion automatizada]] — Concepto transversal detectado en transcripciones y documentos base.
-- [[Precios oficiales M.A.T.I.A.S. 2026]] — Politica comercial y parrilla de planes.
 - [[Pricing y propuesta comercial]] — Concepto transversal detectado en transcripciones y documentos base.
 - [[Requerimientos Tecnicos M.A.T.I.A.S.]] — Descripcion tecnica del producto y arquitectura multi-tenant.
 - [[Reunion - Agaval - 2026-03-16]] — Resumen de la reunion con Agaval del 2026-03-16 sobre Presentacion M.A.T.I.A.S..

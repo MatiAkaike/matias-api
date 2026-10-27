@@ -36,3 +36,7 @@ El runner vacía el entorno, impide cargar `.env`, bloquea conexiones y utiliza 
 ## Alcance
 
 Son controles por capas, no una garantía de detección universal. Las consultas SQL deben seguir parametrizadas; la inspección de texto no sustituye esa protección. No se elimina evidencia ni se determina que un visitante es falso por un solo patrón. La rotación de una credencial antigua exige coordinación; retirarla del archivo no la invalida ni modifica por sí solo la configuración de producción.
+
+## Material interno retirado del repositorio (26-oct-2026)
+
+Este repositorio es público. Por decisión de Oscar se reescribió su historial para retirar la lista interna de precios (`conocimiento/Precios oficiales M.A.T.I.A.S. 2026.md`), el prompt antiguo sin uso que la repetía (`prompt.py`), sus fragmentos en `oscar_graph/public_corpus.jsonl` y `oscar_graph/knowledge_graph.json`, y las transcripciones de reuniones con clientes (`conocimiento/Akaike1.md` a `Akaike26.md`). `scripts/build_oscar_graph.py` ya no marca la lista de precios como pública. Nada de eso debe volver al repositorio: precios, cotizaciones, transcripciones y datos de clientes viven fuera de él. Hay una copia completa del historial anterior fuera del repositorio.

@@ -40,7 +40,6 @@ PUBLIC_MATIAS_TITLES = {
     "m.a.t.i.a.s. y m.a.t.i.a.s. copilot",
     "akaike credit risk solutions – teaser ejecutivo",
     "implementación de m.a.t.i.a.s. sin data histórica propia",
-    "precios oficiales m.a.t.i.a.s. 2026",
     "planes m.a.t.i.a.s.",
     "akaike presentación de servicios 2026 - m.a.t.i.a.s.",
     "akaike presentación de servicios 2026 - m.a.t.i.a.s.sp",
