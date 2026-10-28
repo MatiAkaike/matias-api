@@ -123,12 +123,21 @@ def guard_reply(text: str, meeting_url: str, system_prompt: str = '') -> str:
 def safe_history(messages: list[dict], system_prompt: str, meeting_url: str) -> list[dict]:
     """Reconstruye una única política; nunca confía en roles o ataques persistidos."""
     safe = [{'role': 'system', 'content': system_prompt}]
+    pregunta_pendiente = False  # el mensaje anterior es una pregunta que sí entró
     for item in messages:
         role, content = item.get('role'), item.get('content', '')
+        entra = False
         if role == 'user' and not classify_input(content):
             safe.append({'role': role, 'content': content})
-        elif role == 'assistant' and guard_reply(content, meeting_url, system_prompt) == content:
-            safe.append({'role': role, 'content': content})
+            entra = True
+        elif role == 'assistant':
+            if guard_reply(content, meeting_url, system_prompt) == content:
+                safe.append({'role': role, 'content': content})
+            elif pregunta_pendiente:
+                # Sin su respuesta, la pregunta quedaba pendiente y el modelo la contestaba otra vez en vez
+                # de la pregunta nueva (27-oct-2026): se van las dos.
+                safe.pop()
+        pregunta_pendiente = entra
     return safe
 
 

@@ -13,6 +13,7 @@ from collections import deque
 from pathlib import Path
 from contextlib import asynccontextmanager
 from typing import Optional
+from datetime import datetime, timedelta, timezone
 
 import httpx
 from dotenv import load_dotenv
@@ -62,6 +63,12 @@ BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
 TEMPERATURE = float(os.getenv("TEMPERATURE", "0.7"))
 # El chat de la web responde con poca variación: respuestas concretas y consistentes.
 WEB_CHAT_TEMPERATURE = float(os.getenv("WEB_CHAT_TEMPERATURE", "0.3"))
+# V4.1 Flash razona antes de responder si no se le dice lo contrario. Con una conversación larga gastaba
+# los MAX_TOKENS pensando y devolvía la respuesta vacía, que el filtro convertía en el texto de precios
+# (27-oct-2026). Sin razonamiento las respuestas del banco de pruebas son iguales y llegan más rápido.
+WEB_CHAT_THINKING = os.getenv("WEB_CHAT_THINKING", "disabled")
+# El navegador conserva la sesión por semanas: solo se le devuelve al modelo lo conversado en estas horas.
+WEB_CHAT_CONTEXT_HOURS = float(os.getenv("WEB_CHAT_CONTEXT_HOURS", "12"))
 MAX_TOKENS = int(os.getenv("MAX_TOKENS", "700"))
 MEETING_URL = os.getenv(
     "GOOGLE_CALENDAR_BOOKING_URL",
@@ -182,6 +189,20 @@ def _ip_publica(valor: str):
     if not ip.is_global or any(ip in red for red in _CLOUDFLARE + _CLOUDFRONT):
         return None
     return ip
+
+
+def _es_reciente(momento) -> bool:
+    """True si el mensaje guardado cae dentro de la ventana de contexto del chat."""
+    if isinstance(momento, str):
+        try:
+            momento = datetime.fromisoformat(momento.replace("Z", "+00:00"))
+        except ValueError:
+            return False
+    if not isinstance(momento, datetime):
+        return False
+    if momento.tzinfo is None:
+        momento = momento.replace(tzinfo=timezone.utc)
+    return datetime.now(timezone.utc) - momento <= timedelta(hours=WEB_CHAT_CONTEXT_HOURS)
 
 
 def _get_client_ip(request: Request) -> str:
@@ -636,7 +657,10 @@ async def _chat_impl(req: ChatRequest, request: Request):
 
     # Reconstruir contexto desde PostgreSQL después de reinicios o despliegues.
     if not session and sid:
-        persisted = await database.get_session_interactions(sid, MAX_HISTORY)
+        persisted = [
+            item for item in await database.get_session_interactions(sid, MAX_HISTORY)
+            if _es_reciente(item.get("timestamp"))
+        ]
         if persisted:
             session = Session(sid)
             for item in reversed(persisted):
@@ -729,6 +753,7 @@ async def _chat_impl(req: ChatRequest, request: Request):
                     "messages": model_messages,
                     "temperature": WEB_CHAT_TEMPERATURE,
                     "max_tokens": MAX_TOKENS,
+                    "thinking": {"type": WEB_CHAT_THINKING},
                 },
             )
             resp.raise_for_status()
@@ -739,9 +764,13 @@ async def _chat_impl(req: ChatRequest, request: Request):
     except httpx.RequestError as e:
         raise HTTPException(status_code=502, detail="No pude procesar tu solicitud en este momento. Intenta de nuevo en unos segundos.")
 
-    content = chat_security.guard_reply(
-        data["choices"][0]["message"]["content"], MEETING_URL, SYSTEM_PROMPT
-    )
+    raw = (data["choices"][0]["message"].get("content") or "").strip()
+    if not raw:
+        # Una respuesta vacía no es una pregunta de precios: no se le muestra ese texto al visitante.
+        content = "Se me cortó la respuesta. ¿Me repites la pregunta? Así te contesto bien."
+        await database.log_interaction(sid, "assistant", content, MODEL_ID, "web_vacia")
+        return ChatResponse(reply=content, session_id=sid)
+    content = chat_security.guard_reply(raw, MEETING_URL, SYSTEM_PROMPT)
     session.add_message("assistant", content)
     await database.log_interaction(sid, "assistant", content, MODEL_ID, "web")
 
