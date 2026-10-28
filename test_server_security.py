@@ -49,6 +49,13 @@ class SecurityBoundaryTests(unittest.TestCase):
         request = self._request_con_xff("190.85.1.2, 2606:4700::1")
         self.assertEqual(server._get_client_ip(request), "190.85.1.2")
 
+    def test_el_proxy_propio_de_akaike_lat_se_salta(self):
+        # Desde el 27-oct-2026 www.akaike.lat pasa /api/* por el Caddy de la EC2 (18.208.15.164).
+        request = self._request_con_xff("190.85.1.2, 18.208.15.164", peer="10.0.0.2")
+        self.assertEqual(server._get_client_ip(request), "190.85.1.2")
+        request = self._request_con_xff("206.62.142.10, 190.85.1.2, 18.208.15.164", peer="10.0.0.2")
+        self.assertEqual(server._get_client_ip(request), "190.85.1.2")
+
     def test_sin_forwarded_usa_la_conexion(self):
         request = Request({
             "type": "http", "method": "GET", "path": "/", "headers": [],

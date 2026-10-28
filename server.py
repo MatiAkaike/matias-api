@@ -137,6 +137,14 @@ _CLOUDFLARE = tuple(ipaddress.ip_network(r) for r in (
 ))
 
 
+# Proxies propios que reenvían al chat: el Caddy de la EC2 matias-lab sirve www.akaike.lat desde el
+# 27-oct-2026 y pasa /api/* a Render. Caddy reescribe X-Forwarded-For con la IP real del visitante y Render
+# agrega a la derecha la de la EC2; esa se salta para no meter a todos los visitantes en una sola cuota.
+_PROXIES_PROPIOS = frozenset(
+    x.strip() for x in os.getenv("TRUSTED_PROXY_IPS", "18.208.15.164").split(",") if x.strip()
+)
+
+
 def _ip_publica(valor: str):
     try:
         ip = ipaddress.ip_address(valor.strip())
@@ -157,7 +165,7 @@ def _get_client_ip(request: Request) -> str:
     """
     forwarded = request.headers.get("X-Forwarded-For", "")
     for candidate in reversed(forwarded.split(",")):
-        if _ip_publica(candidate):
+        if _ip_publica(candidate) and candidate.strip() not in _PROXIES_PROPIOS:
             return candidate.strip()
     peer = request.client.host if request.client else ""
     return peer or "unknown"
