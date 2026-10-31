@@ -1327,6 +1327,52 @@ async def presentacion_chat(req: PresentacionRequest, response: Response, reques
     )
 
 
+# ─── Asistente de ofertas comerciales (p. ej. /ofertas/aluri-…/ en akaike.lat) ─────────────
+import oferta_chat
+
+
+class OfertaChatRequest(PydanticBase):
+    oferta: str = Field(min_length=2, max_length=40, pattern=r'^[a-z0-9-]+$')
+    acceso: str = Field(min_length=64, max_length=64, pattern=r'^[0-9a-f]{64}$')
+    message: str = Field(min_length=1, max_length=800)
+    session_id: str = Field(min_length=1, max_length=100, pattern=r'^[A-Za-z0-9][A-Za-z0-9_.:-]{0,99}$')
+    lector: str = Field(default="", max_length=120)
+    historial: list[dict] = Field(default_factory=list, max_length=16)
+    interno: bool = False
+
+
+@app.post("/api/oferta/chat")
+async def oferta_chat_endpoint(req: OfertaChatRequest, request: Request):
+    # Mismos frenos que la presentación: origen akaike.lat, reto de un solo uso, cuota por IP y tope global.
+    if not anti_bots.origen_valido(request.headers.get("Origin", ""), request.headers.get("Referer", "")):
+        return JSONResponse(status_code=403, content={"detail": "origen"})
+    ok_reto, motivo_reto = anti_bots.verificar(request.headers.get("X-Reto", ""))
+    if not ok_reto:
+        return JSONResponse(status_code=403, content={"detail": "reto", "motivo": motivo_reto})
+    # Solo quien abrió la oferta tiene su llave: sin ella no hay respuestas con valores.
+    if not oferta_chat.acceso_valido(req.oferta, req.acceso):
+        return JSONResponse(status_code=403, content={"detail": "acceso"})
+    client_context = await _get_client_context(request)
+    client_ip = client_context["ip"]
+    interno = req.interno or await presentacion_acceso.es_interna(client_ip)
+    if not interno and not _consume_chat_quota(client_ip):
+        return {"reply": "Ya resolvimos muchas preguntas en esta sesión. Para seguir, conversemos con Oscar: " + AGENDA_URL}
+    if not anti_bots.hay_cupo_global():
+        return {"reply": "En este momento tengo muchas consultas. Si quiere, lo resolvemos con Oscar: " + AGENDA_URL}
+    if chat_security.classify_input(req.message) == "injection":
+        reply = "Puedo ayudarle con dudas sobre la oferta y sobre M.A.T.I.A.S. ¿Qué le gustaría aclarar?"
+    else:
+        reply = await oferta_chat.responder(req.oferta, req.message, req.historial, req.lector)
+    if not interno:
+        fuente = f"oferta-{req.oferta}"
+        try:
+            await database.log_interaction(req.session_id, "user", req.message, source=fuente)
+            await database.log_interaction(req.session_id, "assistant", reply, model="deepseek-chat", source=fuente)
+        except Exception:
+            logging.getLogger(__name__).warning("oferta_chat: no se pudo registrar el turno", exc_info=True)
+    return {"reply": reply, "session_id": req.session_id}
+
+
 # ─── Eventos de presentación ──────────────────────────────────────────────
 
 class PresentacionEvent(PydanticBase):
