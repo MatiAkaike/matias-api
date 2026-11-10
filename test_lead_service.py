@@ -23,6 +23,19 @@ class LeadExtractionTests(unittest.TestCase):
         lead = lead_service._extract_lead_data("Tenemos 25 solicitudes y 3 productos")
         self.assertNotIn("whatsapp", lead)
 
+    def test_palabras_que_contienen_rol_o_empresa_no_crean_un_lead(self):
+        """El 5-nov se creó un lead vacío con cargo «lo» por «en desarrollo» (Oscar, 9-nov-2026)."""
+        for texto in ("Ocea, Matias es un producto ya listo o en desarrollo?",
+                      "Soy desarrollador de Akaike haciendo un debug",
+                      "¿Cómo le sirve a mi empresa de crédito digital?",
+                      "¿Qué controles tiene el modelo?", "¿Quién está a cargo de la implementación?"):
+            with self.subTest(texto=texto):
+                self.assertEqual(lead_service._extract_lead_data(texto), {})
+
+    def test_empresa_y_cargo_explicitos(self):
+        lead = lead_service._extract_lead_data("Mi empresa se llama Coopcentral y mi cargo es director de riesgo")
+        self.assertEqual((lead["empresa"], lead["cargo"]), ("Coopcentral", "director de riesgo"))
+
     def test_latest_contact_correction_wins(self):
         lead = lead_service._extract_lead_data(
             "Mi correo es anterior@example.com y mi WhatsApp 3001112233. "

@@ -140,6 +140,52 @@ class ClientContextTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(context["country"], "unknown")
         self.assertEqual(context["city"], "")
 
+    async def test_si_ipwho_falla_usa_el_siguiente_servicio(self):
+        """Desde Render ipwho.is falla y las sesiones quedaban sin ciudad (9-nov-2026)."""
+        respuestas = {
+            "ipwho.is": RuntimeError("sin respuesta"),
+            "ipinfo.io": {"city": "Cota", "region": "Cundinamarca", "country": "CO", "loc": "4.8095,-74.0985",
+                          "org": "AS3816 COLOMBIA TELECOMUNICACIONES S.A. ESP BIC", "timezone": "America/Bogota"},
+        }
+
+        class Respuesta:
+            def __init__(self, cuerpo):
+                self.cuerpo = cuerpo
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.cuerpo
+
+        class Cliente:
+            def __init__(self, *args, **kwargs):
+                self.urls = []
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *args):
+                return False
+
+            async def get(self, url):
+                cuerpo = respuestas[url.split("/")[2]]
+                if isinstance(cuerpo, Exception):
+                    raise cuerpo
+                return Respuesta(cuerpo)
+
+        request = Request({
+            "type": "http", "method": "GET", "path": "/", "headers": [],
+            "client": ("190.85.10.20", 1234), "server": ("test", 80), "scheme": "http", "query_string": b"",
+        })
+        server.geo_cache.pop("190.85.10.20", None)
+        with patch.object(server.httpx, "AsyncClient", Cliente), patch.dict("os.environ", {"GEOIP_LOOKUP_ENABLED": "true"}):
+            context = await server._get_client_context(request)
+        server.geo_cache.pop("190.85.10.20", None)
+        self.assertEqual((context["city"], context["country"], context["timezone"]), ("Cota", "CO", "America/Bogota"))
+        self.assertEqual(context["network_org"], "COLOMBIA TELECOMUNICACIONES S.A. ESP BIC")
+        self.assertEqual((context["latitude"], context["longitude"]), (4.8095, -74.0985))
+
     async def test_analytics_failure_does_not_break_chat_path(self):
         with patch.object(server.analytics_store, "touch_session", side_effect=RuntimeError("db down")):
             await server._touch_session_safe("qa-session", {"ip": "8.8.8.8"})

@@ -65,16 +65,21 @@ def _extract_lead_data(text: str) -> dict[str, str]:
     if name_match:
         lead["nombre"] = name_match.group(1).strip()
 
+    # Empresa y cargo solo cuando la persona los dice de forma explícita y como palabra completa. Antes «rol» se
+    # encontraba dentro de «desarrollo» (cargo «lo») o «desarrollador», y «mi empresa de crédito digital» quedaba como
+    # empresa «de crédito digital»: así nacían leads vacíos (9-nov-2026).
     company_match = re.search(
-        r"(?:empresa|compañía|trabajo en|de la empresa|de la compañía)\s*:?\s*([A-Za-zÁÉÍÓÚÑáéíóúñ0-9&' -]{2,60})",
+        r"\b(?:trabajo en|trabajamos en|mi empresa (?:es|se llama)|la empresa (?:es|se llama)|empresa\s*:|compañía\s*:|entidad\s*:)"
+        r"\s*([A-Za-zÁÉÍÓÚÑáéíóúñ0-9&' -]{2,60})",
         text,
         re.IGNORECASE,
     )
     if company_match:
-        lead["empresa"] = company_match.group(1).strip().rstrip(".,")
+        empresa = re.split(r"\s+y\s+(?:mi|el|la|soy|me)\b", company_match.group(1), maxsplit=1, flags=re.IGNORECASE)[0]
+        lead["empresa"] = empresa.strip().rstrip(".,")
 
     role_match = re.search(
-        r"(?:cargo|puesto|rol)\s*:?\s*([A-Za-zÁÉÍÓÚÑáéíóúñ -]{2,50})",
+        r"\b(?:mi cargo es|mi puesto es|mi rol es|cargo\s*:|puesto\s*:|rol\s*:)\s*([A-Za-zÁÉÍÓÚÑáéíóúñ -]{2,50})",
         text,
         re.IGNORECASE,
     )

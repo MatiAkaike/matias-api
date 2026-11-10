@@ -230,6 +230,75 @@ def _header_value(request: Request, *names: str) -> str:
     return ""
 
 
+def _float_o_none(value):
+    try:
+        return float(value) if value not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _geo_ipwho(data: dict) -> dict:
+    if data.get("success") is False:
+        return {}
+    return {
+        "country": data.get("country_code") or "", "region": data.get("region") or "", "city": data.get("city") or "",
+        "latitude": _float_o_none(data.get("latitude")), "longitude": _float_o_none(data.get("longitude")),
+        "timezone": (data.get("timezone") or {}).get("id", "") if isinstance(data.get("timezone"), dict) else "",
+        "network_org": (data.get("connection") or {}).get("org") or (data.get("connection") or {}).get("isp") or "",
+    }
+
+
+def _geo_ipinfo(data: dict) -> dict:
+    if data.get("bogon") or data.get("error"):
+        return {}
+    lat, _, lon = (data.get("loc") or "").partition(",")
+    # ipinfo entrega la red como «AS3816 COLOMBIA TELECOMUNICACIONES»: se deja solo el nombre.
+    org = re.sub(r"^AS\d+\s+", "", data.get("org") or "")
+    return {
+        "country": data.get("country") or "", "region": data.get("region") or "", "city": data.get("city") or "",
+        "latitude": _float_o_none(lat), "longitude": _float_o_none(lon), "timezone": data.get("timezone") or "",
+        "network_org": org,
+    }
+
+
+def _geo_ipapi(data: dict) -> dict:
+    if data.get("error"):
+        return {}
+    return {
+        "country": data.get("country_code") or data.get("country") or "", "region": data.get("region") or "",
+        "city": data.get("city") or "", "latitude": _float_o_none(data.get("latitude")),
+        "longitude": _float_o_none(data.get("longitude")), "timezone": data.get("timezone") or "",
+        "network_org": data.get("org") or "",
+    }
+
+
+# Cadena de servicios de ubicación por IP. Desde Render, ipwho.is responde con error o se demora más de 2,5 s y
+# las sesiones quedaban sin ciudad ni operador (9-nov-2026): se prueba el siguiente hasta tener la ciudad.
+GEO_PROVEEDORES = (
+    ("https://ipwho.is/{ip}", _geo_ipwho),
+    ("https://ipinfo.io/{ip}/json", _geo_ipinfo),
+    ("https://ipapi.co/{ip}/json/", _geo_ipapi),
+)
+
+
+async def _geo_lookup(ip: str) -> dict:
+    mejor: dict = {}
+    async with httpx.AsyncClient(timeout=3.0, headers={"User-Agent": "matias-api"}) as client:
+        for plantilla, leer in GEO_PROVEEDORES:
+            try:
+                respuesta = await client.get(plantilla.format(ip=ip))
+                respuesta.raise_for_status()
+                geo = leer(respuesta.json())
+            except Exception as exc:
+                logging.getLogger("matias.geo").info("Ubicación por IP no disponible en %s: %s", plantilla.split("/")[2], type(exc).__name__)
+                continue
+            if geo.get("city"):
+                return geo
+            if geo.get("country") and not mejor:
+                mejor = geo
+    return mejor
+
+
 async def _get_client_context(request: Request) -> dict:
     """Extrae red, navegador y geografía; usa GeoIP si el proxy no la entrega."""
     ip = _get_client_ip(request)
@@ -275,25 +344,11 @@ async def _get_client_context(request: Request) -> dict:
                         break
             geo_cache[ip] = (now + ttl, value)
 
-    try:
-        async with httpx.AsyncClient(timeout=2.5) as client:
-            geo_response = await client.get(f"https://ipwho.is/{ip}")
-            geo_response.raise_for_status()
-            data = geo_response.json()
-        if data.get("success", True):
-            geo = {
-                "country": data.get("country_code") or data.get("country") or context["country"],
-                "region": data.get("region") or context["region"],
-                "city": data.get("city") or context["city"],
-                "latitude": data.get("latitude"),
-                "longitude": data.get("longitude"),
-                "timezone": (data.get("timezone") or {}).get("id", "") or context["timezone"],
-                "network_org": (data.get("connection") or {}).get("org", ""),
-            }
-            _cache(GEO_CACHE_TTL, geo)
-            return {**context, **geo}
-    except Exception:
-        _cache(GEO_NEGATIVE_TTL, {})
+    geo = await _geo_lookup(ip)
+    if geo:
+        _cache(GEO_CACHE_TTL, geo)
+        return {**context, **{k: v for k, v in geo.items() if v not in (None, "")}}
+    _cache(GEO_NEGATIVE_TTL, {})
     return context
 
 
