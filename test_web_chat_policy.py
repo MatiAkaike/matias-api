@@ -347,7 +347,7 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('$', reply)
         self.model_post.assert_not_awaited()
 
-    async def test_updated_portfolio_reaches_model_with_availability_limits(self):
+    async def test_updated_portfolio_reaches_model_with_all_products_ready(self):
         response = await self.ask('¿En qué se diferencian Credit Agent y Copilot?')
         self.assertEqual(response.status_code, 200)
         call = self.model_post.await_args
@@ -355,7 +355,9 @@ class WebChatPolicyTests(unittest.IsolatedAsyncioTestCase):
         sent = json.loads(call.kwargs['json']['messages'][-1]['content'])['reference_context']
         for term in ('M.A.T.I.A.S. OS', 'Credit Agent', 'Copilot', 'Flows', 'Data B.I.', 'Training Center', 'MCP', 'terminal'):
             self.assertIn(term, sent)
-        self.assertIn('capacidades actuales y propuestas', sent)
+        # Oscar, 9-nov-2026: todos los productos están listos para operar; nada «en evolución».
+        self.assertIn('Todos los productos están listos para operar', sent)
+        self.assertNotIn('propuestas para evolución', sent)
         self.assertIn('autorización expresa', sent)
         self.assertNotIn('todos los planes', sent.lower())
 

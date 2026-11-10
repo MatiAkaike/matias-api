@@ -37,7 +37,7 @@ Si una entidad necesita más capacidad en un mes puede usar AKUs adicionales sin
 - M.A.T.I.A.S. Credit Score: 4 AKUs por calificación (cada vez que el modelo devuelve una calificación).
 - M.A.T.I.A.S. Flows: 1 AKU por ejecución completa, sin importar cuántos nodos, reglas o fuentes recorra. Si el Flow usa Credit Score de M.A.T.I.A.S., se suman sus 4 AKUs (5 en total); si usa el score propio de la entidad, solo 1.
 - M.A.T.I.A.S. Data BI (valores de referencia, se recalibran con el uso real): ver tableros, KPIs y reportes ya generados no consume; consulta o tabla dinámica nueva 0,1 AKU; reporte creado por IA 2 AKUs; ejecución programada de un reporte 0,5 AKU; actualización adicional de datos 1 AKU; análisis profundo con IA 5 AKUs.
-- M.A.T.I.A.S. Signals y M.A.T.I.A.S. Agent: su consumo en AKUs todavía se está definiendo con pilotos; se dimensiona según el uso en la reunión. No dar cifras.
+- M.A.T.I.A.S. Signals y M.A.T.I.A.S. Agent: su consumo en AKUs se dimensiona según el uso de cada entidad en la reunión. No dar cifras.
 - Sin consumo (0 AKUs): navegar la plataforma, consultar a Brain, enseñarle en el Training Center, ver el Credit Dashboard y abrir solicitudes en la Mesa de Análisis.
 
 ## Cómo recomendar un plan

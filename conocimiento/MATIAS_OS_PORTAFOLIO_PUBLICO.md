@@ -2,11 +2,11 @@
 
 Fuente: visión funcional y portafolio actualizado por Akaike, versión 1.0 de octubre de 2026. Síntesis pública autorizada para orientación comercial.
 
-## Alcance y disponibilidad
+## Alcance
 
 M.A.T.I.A.S. OS es el ecosistema de inteligencia artificial de Akaike especializado en el negocio del crédito. Integra conocimiento institucional, predicción de riesgo, asistencia al analista, señales digitales, procesos, inteligencia de negocios y ejecución de misiones. Se dirige a bancos, cooperativas, fondos de empleados, financieras, fintechs y empresas que otorgan crédito.
 
-El documento de origen describe capacidades actuales y propuestas para evolución. No confirma que todas estén disponibles hoy para todos los clientes. La disponibilidad, fase de entrega, canales e integraciones de cada función se validan con el equipo de Akaike en una reunión. Describir el propósito y el alcance funcional no equivale a garantizar una implementación inmediata. Los beneficios dependen de datos, políticas, integraciones, adopción y validación; no se garantizan resultados ni cifras.
+Todos los productos están listos para operar. Lo que se define con el equipo de Akaike en una reunión es cómo se implementa cada uno en la entidad: integraciones, canales, datos y alcance. Los beneficios dependen de datos, políticas, integraciones, adopción y validación; no se garantizan resultados ni cifras.
 
 El portafolio tiene seis productos: M.A.T.I.A.S. Credit Score, M.A.T.I.A.S. Copilot, M.A.T.I.A.S. Signals, M.A.T.I.A.S. Flows, M.A.T.I.A.S. Data B.I. y M.A.T.I.A.S. Credit Agent. Training Center / M.A.T.I.A.S. Brain es la capacidad transversal de entrenamiento y conocimiento institucional. Los productos pueden aportar valor por separado y complementarse sin exigir sustituir el ERP o core existente, según integración autorizada y disponible.
 
@@ -58,7 +58,7 @@ El alcance documental considera PDFs, formularios, escaneados, nómina, extracto
 
 ## Credit Agent: canales y conexiones
 
-La visión omnicanal contempla web y chat, WhatsApp, correo con buzón propio, Telegram, Slack y telefonía autorizada. Los canales se habilitan según disponibilidad, finalidad, consentimiento, horarios y permisos. La continuidad entre canales exige verificación de identidad y acceso al contexto pertinente. Las referencias personales, laborales o comerciales solo se contactan cuando existe autorización y propósito permitido; una respuesta no es por sí sola verdad comprobada.
+La visión omnicanal contempla web y chat, WhatsApp, correo con buzón propio, Telegram, Slack y telefonía autorizada. Los canales se habilitan según finalidad, consentimiento, horarios y permisos. La continuidad entre canales exige verificación de identidad y acceso al contexto pertinente. Las referencias personales, laborales o comerciales solo se contactan cuando existe autorización y propósito permitido; una respuesta no es por sí sola verdad comprobada.
 
 Las fuentes pueden incluir centrales de riesgo autorizadas, bases internas, ERP de crédito, core, CRM, cartera, contabilidad, documentos y registros empresariales; servicios de comunicaciones, firma, formalización y desembolso según alcance. Cada conexión debe distinguir consulta, propuesta de cambios y operación autorizada. No se prometen conexiones universales ni contratos con proveedores externos.
 
@@ -68,7 +68,7 @@ Son modalidades de interacción e integración del mismo producto, no productos 
 
 El alcance previsto de terminal incluye consulta de pantallas, tablas, archivos y reportes; tareas repetitivas; operación en sistemas permitidos; registro de decisiones ya autorizadas y reporte de resultados. No exige conceptualmente el mismo computador del servidor ERP: requiere un entorno autorizado con acceso a la aplicación y sesión correspondientes. Las integraciones y automatizaciones deben ser permitidas por la entidad y por las condiciones de acceso del sistema.
 
-Cloud y Hybrid son modalidades conceptuales de operación del mismo Credit Agent: Cloud para canales y sistemas accesibles desde el ecosistema; Hybrid añade interacción autorizada con sistemas internos y heredados. Su disponibilidad y alcance concreto se validan en reunión; no son nombres de planes ni una promesa de entrega inmediata.
+Cloud y Hybrid son modalidades conceptuales de operación del mismo Credit Agent: Cloud para canales y sistemas accesibles desde el ecosistema; Hybrid añade interacción autorizada con sistemas internos y heredados. Su alcance concreto se define en reunión; no son nombres de planes.
 
 ## Credit Agent: habilidades, operaciones y control
 
@@ -88,4 +88,4 @@ Brain aporta conocimiento; Copilot ayuda a consultarlo; Credit Score aporta pred
 
 Explicar productos, beneficios, planes y AKUs según el documento público de suscripción (Starter, Expert, Pro y Corporate), sin comunicar precios, mensualidades, descuentos ni ningún monto en dinero. Para toda solicitud de precio, presupuesto o cotización invitar expresamente a una reunión y mostrar el enlace oficial de agenda: https://calendar.app.google/9L3paRWXnsMjkXKU7
 
-La reunión sirve para confirmar la necesidad, disponibilidad actual, alcance, integraciones, permisos y propuesta correspondiente. No inventar una cotización ni afirmar que todas las funciones de esta visión ya operan comercialmente.
+La reunión sirve para confirmar la necesidad, el alcance, las integraciones, los permisos y la propuesta correspondiente. No inventar una cotización.

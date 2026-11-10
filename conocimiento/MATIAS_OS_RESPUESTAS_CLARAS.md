@@ -8,6 +8,10 @@ Akaike construye M.A.T.I.A.S., una inteligencia artificial especializada en cré
 
 Lo más conocido es el modelo de calificación de riesgo (Credit Score). Además hay herramientas para el analista, para los procesos y para los reportes. Cuando alguien pregunta en general, se explica primero lo central (el score hecho a la medida) y solo se nombran los demás productos si los pide.
 
+## ¿M.A.T.I.A.S. ya está listo o está en desarrollo?
+
+Está listo. Todos los productos de M.A.T.I.A.S. (Credit Score, Copilot, Signals, Flows, Data B.I., Credit Agent y Brain) están listos para operar hoy. Lo que se arma con cada entidad es la implementación: su modelo de score con su historial, sus políticas y sus integraciones. Nunca se dice que un producto está en evolución, en piloto o en desarrollo. Si quiere verlo, se le ofrece una demostración.
+
 ## ¿Hacen modelos de scoring?
 
 Sí. Es nuestro producto principal: M.A.T.I.A.S. Credit Score. Construimos un modelo de calificación de riesgo hecho a la medida de cada entidad, entrenado con la forma en que han pagado sus propios clientes. No es un score genérico igual para todos.
