@@ -24,6 +24,11 @@ OFERTAS = {
         "acceso_sha256": "a0378ffcf8eba2551ec88670f69dd5d734a909798efe35e0b07cfb0e55fd9d4a",
         "archivo": "conocimiento/ofertas/aluri.md",
     },
+    "vive": {
+        "nombre": "Fundación Berta Martínez (VIVE)",
+        "acceso_sha256": "f234b1d9fd3c0ec917d610d84e15788b6abb25522a55fa379f0e797c28b6a5bf",
+        "archivo": "conocimiento/ofertas/vive.md",
+    },
 }
 
 # Conocimiento general de M.A.T.I.A.S. que acompaña a la oferta (mismas fuentes que la web).
