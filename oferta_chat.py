@@ -29,6 +29,11 @@ OFERTAS = {
         "acceso_sha256": "f234b1d9fd3c0ec917d610d84e15788b6abb25522a55fa379f0e797c28b6a5bf",
         "archivo": "conocimiento/ofertas/vive.md",
     },
+    "diana-agricola": {
+        "nombre": "Diana Agrícola",
+        "acceso_sha256": "fb1e5f03751de9f9e3f116990581ba2b676d05ec0f4ad96c152b25aa70ad9ff9",
+        "archivo": "conocimiento/ofertas/diana-agricola.md",
+    },
 }
 
 # Conocimiento general de M.A.T.I.A.S. que acompaña a la oferta (mismas fuentes que la web).
